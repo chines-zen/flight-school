@@ -1,0 +1,21 @@
+{
+  "name": "flight-school-zennovate",
+  "version": "1.0.0",
+  "description": "Single-file Express app for Zendesk project onboarding, Airtable setup, and AI Agent configuration.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "NODE_ENV=development node index.js",
+    "check": "node --check index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "connect-pg-simple": "latest",
+    "dotenv": "latest",
+    "express": "latest",
+    "express-session": "latest",
+    "pg": "latest"
+  }
+}
