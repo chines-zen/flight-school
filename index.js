@@ -234,7 +234,6 @@ function pageChrome(req, title, body) {
     <header class="topbar">
       <div class="header-left">
         <a class="brand" href="/">Zendesk Flight School</a>
-        <a class="header-link" href="/">Back to flights</a>
       </div>
       <nav>
         <span>${escapeHtml(req.user.email)}</span>
@@ -299,13 +298,6 @@ function layout(title, body) {
           display: flex;
           gap: 18px;
         }
-        .header-link {
-          color: var(--zd-subtle);
-          font-size: 14px;
-          font-weight: 650;
-          text-decoration: none;
-        }
-        .header-link:hover { color: var(--zd-green); }
         .topbar nav {
           align-items: center;
           color: var(--zd-subtle);
@@ -342,6 +334,26 @@ function layout(title, body) {
           font-size: 28px;
           margin-right: 110px;
         }
+        .hero-title {
+          align-items: center;
+          display: flex;
+          gap: 12px;
+          margin-right: 110px;
+        }
+        .hero-title h1 {
+          margin-right: 0;
+        }
+        .schedule-badge {
+          border-radius: 999px;
+          display: inline-block;
+          font-size: 12px;
+          font-weight: 800;
+          padding: 5px 10px;
+          text-transform: lowercase;
+        }
+        .schedule-badge.scheduled { background: #edf7ff; color: #1f73b7; }
+        .schedule-badge.live { background: #edf8f4; color: var(--zd-success); }
+        .schedule-badge.completed { background: #eef0f2; color: var(--zd-subtle); }
         .status-badge {
           background: #eef0f2;
           border-radius: 999px;
@@ -355,10 +367,15 @@ function layout(title, body) {
         .status-badge.ready { background: #edf8f4; color: var(--zd-success); }
         .status-badge.active { background: #edf7ff; color: #1f73b7; }
         .status-badge.draft { background: #eef0f2; color: var(--zd-subtle); }
-        .detail-hero .status-badge {
+        .detail-hero .edit-toggle {
           position: absolute;
           right: 24px;
           top: 24px;
+        }
+        .edit-panel {
+          border-top: 1px solid var(--zd-border);
+          margin-top: 22px;
+          padding-top: 18px;
         }
         .detail-list {
           margin: 0;
@@ -369,7 +386,7 @@ function layout(title, body) {
           margin-bottom: 3px;
         }
         .detail-list dd {
-          font-weight: 650;
+          font-weight: 500;
           margin: 0;
         }
         .mission-layout {
@@ -505,6 +522,32 @@ function layout(title, body) {
           grid-template-columns: 1fr 220px 140px auto;
           margin-bottom: 16px;
         }
+        .toolbar.live-filter {
+          align-items: end;
+          grid-template-columns: minmax(260px, 1fr) auto;
+          max-width: 760px;
+        }
+        .inline-checkbox {
+          align-items: center;
+          color: var(--zd-subtle);
+          display: flex;
+          font-size: 13px;
+          font-weight: 700;
+          gap: 7px;
+          margin-bottom: 11px;
+          white-space: nowrap;
+        }
+        .inline-checkbox input {
+          width: auto;
+        }
+        .sort-link {
+          color: var(--zd-subtle);
+          text-decoration: none;
+        }
+        .sort-link:hover {
+          color: var(--zd-green);
+          text-decoration: underline;
+        }
         .pill {
           background: #e8f5f3;
           border-radius: 999px;
@@ -587,13 +630,69 @@ function layout(title, body) {
           margin: 0;
         }
         .checkbox-list input { width: auto; }
+        .criteria-table input[type="text"] {
+          min-width: 180px;
+        }
+        .criteria-table col.item-col { width: 58%; }
+        .criteria-table col.check-col { width: 14%; }
+        .criteria-table col.action-col { width: 120px; }
+        .criteria-table th {
+          white-space: normal;
+        }
+        .criteria-table input[readonly] {
+          background: transparent;
+          border-color: transparent;
+          padding-left: 0;
+        }
+        .criteria-table input[type="checkbox"] {
+          width: auto;
+        }
+        .criteria-row {
+          cursor: pointer;
+        }
+        .criteria-row:hover {
+          background: #f3f5f5;
+        }
+        .icon-button {
+          background: white;
+          border-color: var(--zd-border);
+          color: var(--zd-green);
+          padding: 6px 9px;
+        }
+        .criteria-actions {
+          display: flex;
+          gap: 6px;
+          justify-content: flex-end;
+        }
+        .criteria-heading {
+          align-items: center;
+          cursor: pointer;
+          display: flex;
+          gap: 8px;
+          justify-content: space-between;
+          list-style: none;
+        }
+        .criteria-heading h2 {
+          margin-bottom: 0;
+        }
+        .criteria-heading::-webkit-details-marker {
+          display: none;
+        }
+        .criteria-caret {
+          color: var(--zd-subtle);
+          font-size: 16px;
+        }
+        details[open] .criteria-caret {
+          transform: rotate(90deg);
+        }
         @media (max-width: 800px) {
           .grid.two, .grid.three, .toolbar, .tabs, .mission-layout { grid-template-columns: 1fr; }
           .topbar { align-items: flex-start; flex-direction: column; gap: 8px; padding: 16px; }
           .header-left { align-items: flex-start; flex-direction: column; gap: 6px; }
           .container { padding: 16px; }
-          .detail-hero h1 { margin-right: 0; }
-          .detail-hero .status-badge { position: static; margin-bottom: 12px; }
+          .detail-hero h1, .hero-title { margin-right: 0; }
+          .hero-title { align-items: flex-start; flex-direction: column; gap: 6px; }
+          .detail-hero .edit-toggle { position: static; margin-bottom: 12px; }
         }
       </style>
       <script>
@@ -623,6 +722,51 @@ function parseSuccessCriteria(value) {
     .split(/\r?\n/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function normalizeSuccessCriteria(value) {
+  const criteria = Array.isArray(value) ? value : [];
+  const normalized = criteria.map((criterion) => {
+    if (typeof criterion === "string") {
+      return {
+        item: criterion,
+        technicalValidation: false,
+        customerAgreement: false,
+        notes: [""]
+      };
+    }
+
+    return {
+      item: String(criterion?.item || ""),
+      technicalValidation: criterion?.technicalValidation === true || criterion?.technicalValidation === "true",
+      customerAgreement: criterion?.customerAgreement === true || criterion?.customerAgreement === "true",
+      notes: Array.isArray(criterion?.notes) && criterion.notes.length
+        ? criterion.notes.map((note) => String(note || ""))
+        : [""]
+    };
+  });
+
+  return normalized.length ? normalized : [{
+    item: "",
+    technicalValidation: false,
+    customerAgreement: false,
+    notes: [""]
+  }];
+}
+
+function parseSuccessCriteriaRows(body) {
+  const items = selectedValues(body.item);
+
+  return items.map((item, index) => {
+    const notesValue = body[`notes_${index}`];
+    const notes = selectedValues(notesValue).map((note) => String(note || "").trim()).filter(Boolean);
+    return {
+      item: String(item || "").trim(),
+      technicalValidation: body[`technicalValidation_${index}`] === "true",
+      customerAgreement: body[`customerAgreement_${index}`] === "true",
+      notes: notes.length ? notes : [""]
+    };
+  }).filter((criterion) => criterion.item || criterion.technicalValidation || criterion.customerAgreement || criterion.notes.some(Boolean));
 }
 
 function parseAuthorizedUsers(value) {
@@ -798,6 +942,7 @@ async function listVisibleProjects(user, options = {}) {
     project_name: "p.project_name",
     client: "p.client",
     owner_email: "p.owner_email",
+    account_executive: "p.account_executive",
     start_date: "p.start_date",
     end_date: "p.end_date",
     arr_impact: "p.arr_impact",
@@ -880,7 +1025,7 @@ function projectSummary(project) {
     <dl class="grid three detail-list">
       <div><dt>Client</dt><dd>${escapeHtml(project.client)}</dd></div>
       <div><dt>Owner</dt><dd>${escapeHtml(project.owner_email)}</dd></div>
-      <div><dt>ARR Impact</dt><dd>${escapeHtml(project.arr_impact ?? "")}</dd></div>
+      <div><dt>ARR</dt><dd>${escapeHtml(formatCurrency(project.arr_impact))}</dd></div>
       <div><dt>Start Date</dt><dd>${escapeHtml(formatDate(project.start_date))}</dd></div>
       <div><dt>End Date</dt><dd>${escapeHtml(formatDate(project.end_date))}</dd></div>
       <div><dt>Account Executive</dt><dd>${escapeHtml(project.account_executive || "")}</dd></div>
@@ -890,6 +1035,74 @@ function projectSummary(project) {
 
 function formatDate(value) {
   return value ? String(value).slice(0, 10) : "";
+}
+
+function formatDateInput(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().slice(0, 10);
+}
+
+function formatDayMonth(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const month = date.toLocaleString("en-US", { month: "long" });
+  const displayMonth = month.length > 5 ? month.slice(0, 3) : month;
+  return `${displayMonth} ${date.getDate()}`;
+}
+
+function formatCurrency(value) {
+  if (value === null || value === undefined || value === "") return "";
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return String(value);
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+    minimumFractionDigits: 0
+  }).format(amount);
+}
+
+function daysRemaining(value) {
+  if (!value) return "";
+  const end = new Date(value);
+  if (Number.isNaN(end.getTime())) return "";
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  end.setHours(0, 0, 0, 0);
+  const days = Math.ceil((end.getTime() - today.getTime()) / 86400000);
+  if (days < 0) return "Past due";
+  if (days === 0) return "Today";
+  if (days === 1) return "1 day";
+  return `${days} days`;
+}
+
+function formatEndDateWithRemaining(value) {
+  const date = formatDate(value);
+  const remaining = daysRemaining(value);
+  if (!date) return "";
+  return remaining ? `${date} (${remaining} remaining)` : date;
+}
+
+function flightScheduleStatus(project) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const start = project.start_date ? new Date(project.start_date) : null;
+  const end = project.end_date ? new Date(project.end_date) : null;
+  if (start) start.setHours(0, 0, 0, 0);
+  if (end) end.setHours(0, 0, 0, 0);
+
+  if (start && start > today) return { label: "Scheduled", className: "scheduled" };
+  if (end && end < today) return { label: "Completed", className: "completed" };
+  return { label: "Live", className: "live" };
+}
+
+function renderScheduleBadge(project) {
+  const status = flightScheduleStatus(project);
+  return `<span class="schedule-badge ${status.className}">${escapeHtml(status.label)}</span>`;
 }
 
 function flightStatus(project) {
@@ -911,24 +1124,168 @@ function userRoleForFlight(project, user) {
 }
 
 function renderFlightHero(project, user) {
-  const successCriteria = Array.isArray(project.success_criteria) ? project.success_criteria : [];
   return `
     <div class="breadcrumb"><a href="/">Flights</a> / ${escapeHtml(project.project_name)}</div>
     <section class="card detail-hero">
-      ${renderStatusBadge(project)}
-      <h1>${escapeHtml(project.project_name)}</h1>
+      ${canManageProject(project, user) ? '<button type="button" class="secondary edit-toggle" onclick="document.getElementById(\'flight-edit-panel\').hidden = !document.getElementById(\'flight-edit-panel\').hidden">Edit</button>' : ""}
+      <div class="hero-title">
+        <h1>${escapeHtml(project.project_name)}</h1>
+        ${renderScheduleBadge(project)}
+      </div>
       <dl class="grid three detail-list">
-        <div><dt>Use case</dt><dd>${escapeHtml(project.client)}</dd></div>
-        <div><dt>SFDC account</dt><dd>${project.sfdc_account_link ? `<a href="${escapeHtml(project.sfdc_account_link)}">${escapeHtml(project.sfdc_account_link)}</a>` : "Not provided"}</dd></div>
-        <div><dt>SFDC opportunity</dt><dd>${project.sfdc_opportunity_link ? `<a href="${escapeHtml(project.sfdc_opportunity_link)}">${escapeHtml(project.sfdc_opportunity_link)}</a>` : "Not provided"}</dd></div>
-        <div><dt>Your role</dt><dd>${escapeHtml(userRoleForFlight(project, user))}</dd></div>
+        <div><dt>Account</dt><dd>${escapeHtml(project.client)}</dd></div>
+        <div><dt>Opp</dt><dd>${project.sfdc_opportunity_link ? `<a href="${escapeHtml(project.sfdc_opportunity_link)}" target="_blank" rel="noopener noreferrer">SFDC Link</a>` : "Not provided"}</dd></div>
         <div><dt>Account executive</dt><dd>${escapeHtml(project.account_executive || "Not provided")}</dd></div>
-        <div><dt>ARR impact</dt><dd>${escapeHtml(project.arr_impact ?? "Not provided")}</dd></div>
+        <div><dt>ARR</dt><dd>${escapeHtml(formatCurrency(project.arr_impact) || "Not provided")}</dd></div>
         <div><dt>Start date</dt><dd>${escapeHtml(formatDate(project.start_date) || "Not provided")}</dd></div>
-        <div><dt>End date</dt><dd>${escapeHtml(formatDate(project.end_date) || "Not provided")}</dd></div>
-        <div><dt>Success criteria</dt><dd>${escapeHtml(successCriteria.join("; ") || "Not provided")}</dd></div>
+        <div><dt>End date</dt><dd>${escapeHtml(formatEndDateWithRemaining(project.end_date) || "Not provided")}</dd></div>
       </dl>
+      ${canManageProject(project, user) ? renderFlightEditForm(project) : ""}
     </section>
+  `;
+}
+
+function renderFlightEditForm(project) {
+  return `
+    <div id="flight-edit-panel" class="edit-panel" hidden>
+      <h2>Edit flight details</h2>
+      <form method="post" action="/projects/${project.id}/details">
+        <div class="grid three">
+          <div>
+            <label for="edit_project_name">Flight name</label>
+            <input id="edit_project_name" name="project_name" value="${escapeHtml(project.project_name)}" required>
+          </div>
+          <div>
+            <label for="edit_client">Account</label>
+            <input id="edit_client" name="client" value="${escapeHtml(project.client)}" required>
+          </div>
+          <div>
+            <label for="edit_account_executive">Account executive</label>
+            <input id="edit_account_executive" name="account_executive" value="${escapeHtml(project.account_executive || "")}">
+          </div>
+          <div>
+            <label for="edit_arr_impact">ARR</label>
+            <input id="edit_arr_impact" name="arr_impact" type="number" step="0.01" value="${escapeHtml(project.arr_impact ?? "")}">
+          </div>
+          <div>
+            <label for="edit_start_date">Start date</label>
+            <input id="edit_start_date" name="start_date" type="date" value="${escapeHtml(formatDateInput(project.start_date))}">
+          </div>
+          <div>
+            <label for="edit_end_date">End date</label>
+            <input id="edit_end_date" name="end_date" type="date" value="${escapeHtml(formatDateInput(project.end_date))}">
+          </div>
+          <div>
+            <label for="edit_sfdc_opportunity_link">Opp SFDC link</label>
+            <input id="edit_sfdc_opportunity_link" name="sfdc_opportunity_link" type="url" value="${escapeHtml(project.sfdc_opportunity_link || "")}">
+          </div>
+        </div>
+        <div class="actions">
+          <button type="submit">Save changes</button>
+          <button type="button" class="secondary" onclick="document.getElementById('flight-edit-panel').hidden = true">Cancel</button>
+        </div>
+      </form>
+    </div>
+  `;
+}
+
+function renderSuccessCriteriaRow(criterion, index, canManage, editing) {
+  const textReadOnly = canManage && editing ? "" : "readonly";
+  const checkboxDisabled = canManage && editing ? "" : "disabled";
+  return `
+    <tr class="criteria-row" data-criteria-row="${index}">
+      <td><input type="text" name="item" value="${escapeHtml(criterion.item)}" ${textReadOnly}></td>
+      <td><input type="checkbox" name="technicalValidation_${index}" value="true" ${criterion.technicalValidation ? "checked" : ""} ${checkboxDisabled}></td>
+      <td><input type="checkbox" name="customerAgreement_${index}" value="true" ${criterion.customerAgreement ? "checked" : ""} ${checkboxDisabled}></td>
+      <td>
+        ${canManage ? `
+          <div class="criteria-actions">
+          <button type="button" class="icon-button" data-edit-button ${editing ? "hidden" : ""} title="Edit" onclick="setCriteriaEditing(${index}, true)">&#9998;</button>
+          <button type="button" class="icon-button" data-delete-button ${editing ? "" : "hidden"} title="Delete" onclick="deleteCriteriaRow(${index})">&#128465;</button>
+          <button type="submit" class="icon-button" data-save-button ${editing ? "" : "hidden"} title="Save">&#128190;</button>
+          </div>
+        ` : ""}
+      </td>
+    </tr>
+  `;
+}
+
+function renderSuccessCriteriaSection(project, canManage) {
+  const criteria = normalizeSuccessCriteria(project.success_criteria);
+  return `
+    <details class="card" id="success-criteria-panel">
+      <summary class="criteria-heading"><h2>Success Criteria</h2><span class="criteria-caret">&rsaquo;</span></summary>
+      <form method="post" action="/projects/${project.id}/success-criteria" onsubmit="enableCriteriaFields(this)">
+        <table class="criteria-table">
+          <colgroup>
+            <col class="item-col">
+            <col class="check-col">
+            <col class="check-col">
+            <col class="action-col">
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>Technical Validation</th>
+              <th>Customer Agreement</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="criteria-body">
+            ${criteria.map((criterion, index) => renderSuccessCriteriaRow(criterion, index, canManage, false)).join("")}
+          </tbody>
+        </table>
+        ${canManage ? '<div class="actions"><button type="button" onclick="addCriteriaRow()">Add Criteria</button></div>' : ""}
+      </form>
+      <script>
+        function setCriteriaEditing(index, editing) {
+          const row = document.querySelector('[data-criteria-row="' + index + '"]');
+          row?.querySelectorAll("input").forEach((input) => {
+            if (input.type === "checkbox") {
+              input.disabled = !editing;
+            } else {
+              input.readOnly = !editing;
+            }
+          });
+          row?.querySelector("[data-edit-button]")?.toggleAttribute("hidden", editing);
+          row?.querySelector("[data-delete-button]")?.toggleAttribute("hidden", !editing);
+          row?.querySelector("[data-save-button]")?.toggleAttribute("hidden", !editing);
+          if (editing) {
+            row?.querySelector("input")?.focus();
+          }
+        }
+        function deleteCriteriaRow(index) {
+          const row = document.querySelector('[data-criteria-row="' + index + '"]');
+          const form = row?.closest("form");
+          row?.querySelectorAll("input").forEach((input) => {
+            if (input.type === "checkbox") input.checked = false;
+            else input.value = "";
+          });
+          if (row) row.hidden = true;
+          if (form) {
+            enableCriteriaFields(form);
+            form.requestSubmit();
+          }
+        }
+        function addCriteriaRow() {
+          const body = document.getElementById("criteria-body");
+          const index = body.querySelectorAll("[data-criteria-row]").length;
+          const row = document.createElement("tr");
+          row.className = "criteria-row";
+          row.dataset.criteriaRow = String(index);
+          row.innerHTML = '<td><input type="text" name="item" value=""></td><td><input type="checkbox" name="technicalValidation_' + index + '" value="true"></td><td><input type="checkbox" name="customerAgreement_' + index + '" value="true"></td><td><div class="criteria-actions"><button type="button" class="icon-button" data-edit-button hidden title="Edit" onclick="setCriteriaEditing(' + index + ', true)">&#9998;</button><button type="button" class="icon-button" data-delete-button title="Delete" onclick="deleteCriteriaRow(' + index + ')">&#128465;</button><button type="submit" class="icon-button" data-save-button title="Save">&#128190;</button></div></td>';
+          body.appendChild(row);
+          document.getElementById("success-criteria-panel").open = true;
+          row.querySelector("input").focus();
+        }
+        function enableCriteriaFields(form) {
+          form.querySelectorAll("input").forEach((input) => {
+            input.disabled = false;
+            input.readOnly = false;
+          });
+        }
+      </script>
+    </details>
   `;
 }
 
@@ -1013,20 +1370,32 @@ const READINESS_PLACEHOLDERS = {
   "copilot-option-2": { title: "Copilot Configuration - Option 2", description: "Placeholder for the second Copilot configuration path." }
 };
 
+function sortHeader(label, key, currentSort, currentDir, filter, hideCompleted) {
+  const isActive = currentSort === key;
+  const nextDir = isActive && currentDir === "asc" ? "desc" : "asc";
+  const indicator = isActive ? (currentDir === "asc" ? " ↑" : " ↓") : "";
+  const params = new URLSearchParams({ sort: key, dir: nextDir });
+  if (filter) params.set("filter", filter);
+  if (hideCompleted) params.set("hideCompleted", "true");
+  return `<a class="sort-link" href="/?${params.toString()}">${escapeHtml(label)}${indicator}</a>`;
+}
+
 app.get("/", requireUser, async (req, res, next) => {
   try {
-    const sort = req.query.sort || "updated_at";
+    const sort = req.query.sort || "project_name";
     const dir = req.query.dir === "asc" ? "asc" : "desc";
     const filter = req.query.filter || "";
-    const projects = await listVisibleProjects(req.user, { sort, dir, filter });
+    const hideCompleted = req.query.hideCompleted === "true";
+    const projects = (await listVisibleProjects(req.user, { sort, dir, filter }))
+      .filter((project) => !hideCompleted || flightScheduleStatus(project).className !== "completed");
     const rows = projects.map((project) => `
       <tr class="clickable" onclick="goTo('/projects/${project.id}')">
-        <td><strong>${escapeHtml(project.project_name)}</strong><div class="hint">${escapeHtml(project.client)}</div></td>
+        <td><strong>${escapeHtml(project.project_name)}</strong> ${renderScheduleBadge(project)}</td>
+        <td>${escapeHtml(project.client)}</td>
         <td>${escapeHtml(project.owner_email)}</td>
         <td>${escapeHtml(project.account_executive || "")}</td>
-        <td>${escapeHtml(project.arr_impact ?? "")}</td>
-        <td>${escapeHtml(formatDate(project.start_date))}</td>
-        <td>${renderStatusBadge(project)}</td>
+        <td>${escapeHtml(formatCurrency(project.arr_impact))}</td>
+        <td>${escapeHtml(formatDayMonth(project.end_date))}</td>
       </tr>
     `).join("");
 
@@ -1035,45 +1404,52 @@ app.get("/", requireUser, async (req, res, next) => {
         <div class="actions" style="justify-content: space-between; margin-top: 0;">
           <div>
             <h1>Flights</h1>
-            <p class="hint">Select a flight to open Flight details and Mission Control.</p>
           </div>
           <a class="button" href="/projects/new">New flight</a>
         </div>
-        <form class="toolbar" method="get" action="/">
+        <form class="toolbar live-filter" method="get" action="/" data-live-filter>
+          <input type="hidden" name="sort" value="${escapeHtml(sort)}">
+          <input type="hidden" name="dir" value="${escapeHtml(dir)}">
           <div>
             <label for="filter">Filter</label>
-            <input id="filter" name="filter" value="${escapeHtml(filter)}" placeholder="Flight, client, owner, or AE">
+            <input id="filter" name="filter" value="${escapeHtml(filter)}" placeholder="...flight, account, etc." autocomplete="off">
           </div>
-          <div>
-            <label for="sort">Sort by</label>
-            <select id="sort" name="sort">
-              ${["project_name", "client", "owner_email", "start_date", "end_date", "arr_impact", "created_at"].map((item) =>
-                `<option value="${item}" ${sort === item ? "selected" : ""}>${escapeHtml(item.replace(/_/g, " "))}</option>`
-              ).join("")}
-            </select>
-          </div>
-          <div>
-            <label for="dir">Direction</label>
-            <select id="dir" name="dir">
-              <option value="desc" ${dir === "desc" ? "selected" : ""}>Desc</option>
-              <option value="asc" ${dir === "asc" ? "selected" : ""}>Asc</option>
-            </select>
-          </div>
-          <button type="submit">Apply</button>
+          <label class="inline-checkbox">
+            <input type="checkbox" name="hideCompleted" value="true" ${hideCompleted ? "checked" : ""}>
+            Hide completed
+          </label>
         </form>
         <table>
           <thead>
             <tr>
-              <th>Flight</th>
-              <th>Owner</th>
-              <th>AE</th>
-              <th>ARR Impact</th>
-              <th>Start</th>
-              <th>Status</th>
+              <th>${sortHeader("Flight", "project_name", sort, dir, filter, hideCompleted)}</th>
+              <th>${sortHeader("Account", "client", sort, dir, filter, hideCompleted)}</th>
+              <th>${sortHeader("SE", "owner_email", sort, dir, filter, hideCompleted)}</th>
+              <th>${sortHeader("AE", "account_executive", sort, dir, filter, hideCompleted)}</th>
+              <th>${sortHeader("ARR", "arr_impact", sort, dir, filter, hideCompleted)}</th>
+              <th>${sortHeader("End Date", "end_date", sort, dir, filter, hideCompleted)}</th>
             </tr>
           </thead>
           <tbody>${rows || '<tr><td colspan="6">No flights found.</td></tr>'}</tbody>
         </table>
+        <script>
+          const filterInput = document.querySelector("[data-live-filter] input[name='filter']");
+          if (filterInput && sessionStorage.getItem("flightFilterShouldFocus") === "true") {
+            sessionStorage.removeItem("flightFilterShouldFocus");
+            filterInput.focus();
+            filterInput.setSelectionRange(filterInput.value.length, filterInput.value.length);
+          }
+          filterInput?.addEventListener("input", function () {
+            clearTimeout(window.__flightFilterTimer);
+            window.__flightFilterTimer = setTimeout(() => {
+              sessionStorage.setItem("flightFilterShouldFocus", "true");
+              this.form.requestSubmit();
+            }, 250);
+          });
+          document.querySelector("[data-live-filter] input[name='hideCompleted']")?.addEventListener("change", function () {
+            this.form.requestSubmit();
+          });
+        </script>
       </section>
     `));
   } catch (error) {
@@ -1099,11 +1475,7 @@ app.get("/projects/new", requireUser, (req, res) => {
             <input id="project_name" name="project_name" required>
           </div>
           <div>
-            <label for="owner_email">Flight owner Zendesk email</label>
-            <input id="owner_email" name="owner_email" type="email" value="${escapeHtml(req.user.email)}" required>
-          </div>
-          <div>
-            <label for="client">Client</label>
+            <label for="client">Account</label>
             <input id="client" name="client" required>
           </div>
           <div>
@@ -1119,27 +1491,12 @@ app.get("/projects/new", requireUser, (req, res) => {
             <input id="end_date" name="end_date" type="date">
           </div>
           <div>
-            <label for="arr_impact">ARR impact</label>
+            <label for="arr_impact">ARR</label>
             <input id="arr_impact" name="arr_impact" type="number" step="0.01">
-          </div>
-          <div>
-            <label for="sfdc_account_link">SFDC account link</label>
-            <input id="sfdc_account_link" name="sfdc_account_link" type="url">
           </div>
           <div>
             <label for="sfdc_opportunity_link">SFDC opportunity link</label>
             <input id="sfdc_opportunity_link" name="sfdc_opportunity_link" type="url">
-          </div>
-        </div>
-        <div class="grid two" style="margin-top: 16px;">
-          <div>
-            <label for="success_criteria">Success criteria</label>
-            <textarea id="success_criteria" name="success_criteria" placeholder="One success criterion per line"></textarea>
-          </div>
-          <div>
-            <label for="authorized_users">Collaborators</label>
-            <textarea id="authorized_users" name="authorized_users" placeholder="Name, non-zendesk-email@example.com"></textarea>
-            <p class="hint">One user per line. Authorized users can see only flights where they are listed.</p>
           </div>
         </div>
         <div class="checkbox-list">
@@ -1161,12 +1518,12 @@ app.post("/projects", requireUser, async (req, res, next) => {
       return;
     }
 
-    const ownerEmail = normalizeEmail(req.body.owner_email);
+    const ownerEmail = req.user.email;
     if (!assertValidEmail(ownerEmail) || !ownerEmail.endsWith("@zendesk.com")) {
       throw new Error("Flight owner must be a valid Zendesk email address.");
     }
 
-    const authorizedUsers = parseAuthorizedUsers(req.body.authorized_users);
+    const authorizedUsers = [];
     for (const user of authorizedUsers) {
       if (!assertValidEmail(user.email)) throw new Error(`Invalid authorized user email: ${user.email}`);
       if (user.email.endsWith("@zendesk.com")) throw new Error("Authorized users should use non-Zendesk emails.");
@@ -1188,10 +1545,10 @@ app.post("/projects", requireUser, async (req, res, next) => {
           req.body.client,
           req.body.start_date || "",
           req.body.end_date || "",
-          JSON.stringify(parseSuccessCriteria(req.body.success_criteria)),
+          JSON.stringify([]),
           req.body.account_executive || null,
           req.body.arr_impact || "",
-          req.body.sfdc_account_link || null,
+          null,
           req.body.sfdc_opportunity_link || null,
           req.body.module2_auth_users_enabled === "true"
         ]
@@ -1228,6 +1585,7 @@ app.get("/projects/:id", requireUser, async (req, res, next) => {
     const authorizedUsers = await getAuthorizedUsers(project.id);
     res.send(pageChrome(req, `${project.project_name} Flight`, `
       ${renderFlightHero(project, req.user)}
+      ${renderSuccessCriteriaSection(project, canManageProject(project, req.user))}
       ${renderMissionControl(project)}
       ${renderAuthorizedUserManagement(project, authorizedUsers, canManageProject(project, req.user))}
     `));
@@ -1260,6 +1618,65 @@ app.get("/projects/:id/readiness/:module", requireUser, async (req, res, next) =
         </div>
       </section>
     `));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/projects/:id/details", requireUser, async (req, res, next) => {
+  try {
+    const project = await getProject(req.params.id, req.user);
+    if (!project || !canManageProject(project, req.user)) {
+      res.status(403).send("Not allowed.");
+      return;
+    }
+
+    await pool.query(
+      `UPDATE projects
+       SET project_name = $1,
+           client = $2,
+           account_executive = $3,
+           arr_impact = NULLIF($4, '')::numeric,
+           start_date = NULLIF($5, '')::date,
+           end_date = NULLIF($6, '')::date,
+           sfdc_opportunity_link = $7,
+           updated_at = now()
+       WHERE id = $8`,
+      [
+        req.body.project_name,
+        req.body.client,
+        req.body.account_executive || null,
+        req.body.arr_impact || "",
+        req.body.start_date || "",
+        req.body.end_date || "",
+        req.body.sfdc_opportunity_link || null,
+        project.id
+      ]
+    );
+
+    setFlash(req, "Flight details updated.", "success");
+    res.redirect(`/projects/${project.id}`);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/projects/:id/success-criteria", requireUser, async (req, res, next) => {
+  try {
+    const project = await getProject(req.params.id, req.user);
+    if (!project || !canManageProject(project, req.user)) {
+      res.status(403).send("Not allowed.");
+      return;
+    }
+
+    const criteria = parseSuccessCriteriaRows(req.body);
+    await pool.query(
+      "UPDATE projects SET success_criteria = $1::jsonb, updated_at = now() WHERE id = $2",
+      [JSON.stringify(criteria), project.id]
+    );
+
+    setFlash(req, "Success criteria updated.", "success");
+    res.redirect(`/projects/${project.id}`);
   } catch (error) {
     next(error);
   }
