@@ -1,6 +1,32 @@
 # Zendesk Flight School
 
-Single-file Express app for managing projects, configuring Airtable data, and guiding Zendesk AI Agent API integration setup.
+Accelerating AI Wins with Frictionless APIs.
+
+## Problem
+
+Right now, API integration is a major roadblock during critical sales cycles.
+
+The friction: Customers struggle to test API connections inside our AI bots, and our Sales Engineers (SEs) have varying levels of technical comfort guiding them through it.
+
+The risk: This creates a bottleneck for AI trials and Proof of Concepts (PoCs), directly risking revenue to competitors who offer heavier technical hand-holding.
+
+## Solution
+
+We’ve built a tool that democratizes API configuration. It enables anyone with basic Zendesk knowledge to build, test, and share a working API connection using real, third-party data.
+
+## Intended Outcomes
+
+Empowered Sales Engineers: Shifts our SEs from tech-support bottlenecks to strategic advisors, allowing them to confidently showcase advanced capabilities without needing to deeply hardcode configurations.
+
+Faster Deal Velocity: Removes the primary blocker for AI trials, letting customers instantly experience the power of our bots and shortening the sales cycle.
+
+Flexible Deployment: Build a tool that can be used both by Zendesk SEs as well as clients.
+
+The bottom line: We are turning a technical hurdle into a repeatable competitive advantage, making it easier for our Sales Engineers to sell and faster for our customers to buy.
+
+## App Overview
+
+Single-file Express app for managing flights, configuring Airtable data, and guiding Zendesk AI Agent API integration setup.
 
 ## Local Setup
 
@@ -39,4 +65,4 @@ Airtable Personal Access Tokens are encrypted before being saved in PostgreSQL u
 
 ## App Admin
 
-`chines@zendesk.com` is the only app admin and can see all projects.
+`chines@zendesk.com` is the only app admin and can see all flights.
