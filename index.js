@@ -161,6 +161,7 @@ async function migrate() {
       airtable_table_id TEXT,
       airtable_table_name TEXT,
       airtable_key_column TEXT,
+      mission_status JSONB NOT NULL DEFAULT '{}'::jsonb,
       module2_auth_users_enabled BOOLEAN NOT NULL DEFAULT false,
       module2_bot_confirmed BOOLEAN NOT NULL DEFAULT false,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -183,6 +184,9 @@ async function migrate() {
 
     ALTER TABLE project_authorized_users
       ADD COLUMN IF NOT EXISTS access_enabled BOOLEAN NOT NULL DEFAULT false;
+
+    ALTER TABLE projects
+      ADD COLUMN IF NOT EXISTS mission_status JSONB NOT NULL DEFAULT '{}'::jsonb;
 
     ALTER TABLE project_authorized_users
       ALTER COLUMN role SET DEFAULT 'Flight Crew';
@@ -700,6 +704,11 @@ function layout(title, body) {
           background: var(--zd-danger);
           border-color: var(--zd-danger);
         }
+        .button.danger-outline, button.danger-outline {
+          background: white;
+          border-color: var(--zd-danger);
+          color: var(--zd-danger);
+        }
         table {
           border-collapse: collapse;
           width: 100%;
@@ -755,6 +764,15 @@ function layout(title, body) {
           font-weight: 700;
           padding: 4px 9px;
         }
+        .saved-token {
+          background: #edf8f4;
+          border: 1px solid #b8e4d2;
+          border-radius: 8px;
+          color: var(--zd-success);
+          font-weight: 750;
+          margin-bottom: 16px;
+          padding: 12px 14px;
+        }
         .flash {
           border-radius: 8px;
           margin-bottom: 16px;
@@ -768,6 +786,12 @@ function layout(title, body) {
           flex-wrap: wrap;
           gap: 8px;
           margin-bottom: 20px;
+        }
+        .flight-config-title {
+          color: var(--zd-green);
+          font-size: 20px;
+          font-weight: 800;
+          margin: -4px 0 14px;
         }
         .step {
           border: 1px solid var(--zd-border);
@@ -828,6 +852,27 @@ function layout(title, body) {
           margin: 0;
         }
         .checkbox-list input { width: auto; }
+        .schema-preview {
+          background: #f3f5f5;
+          border: 1px solid var(--zd-border);
+          border-radius: 8px;
+          margin-top: 16px;
+          padding: 12px 14px;
+        }
+        .schema-preview ul {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          list-style: none;
+          margin: 8px 0 0;
+          padding: 0;
+        }
+        .schema-preview li {
+          background: white;
+          border: 1px solid var(--zd-border);
+          border-radius: 999px;
+          padding: 5px 9px;
+        }
         .criteria-table input[type="text"] {
           min-width: 180px;
         }
@@ -883,6 +928,12 @@ function layout(title, body) {
           max-width: 620px;
           padding: 24px;
           width: 100%;
+        }
+        .modal.warning {
+          border-top: 5px solid var(--zd-danger);
+        }
+        .modal.warning h2 {
+          color: var(--zd-danger);
         }
         .view-as-title {
           color: var(--zd-text);
@@ -1454,8 +1505,21 @@ function renderFlightEditForm(project) {
         <div class="actions">
           <button type="submit">Save changes</button>
           <button type="button" class="secondary" onclick="document.getElementById('flight-edit-panel').hidden = true">Cancel</button>
+          <button type="button" class="danger-outline" onclick="document.getElementById('delete-flight-modal').hidden = false">Delete Flight</button>
         </div>
       </form>
+      <div id="delete-flight-modal" class="modal-backdrop" hidden>
+        <div class="modal warning" role="dialog" aria-modal="true" aria-labelledby="delete-flight-title">
+          <h2 id="delete-flight-title">Warning! Can't be undone</h2>
+          <p>This will permanently delete ${escapeHtml(project.project_name)} and remove it from the database.</p>
+          <form method="post" action="/projects/${project.id}/delete">
+            <div class="actions">
+              <button type="submit" class="danger">Delete Flight</button>
+              <button type="button" class="secondary" onclick="document.getElementById('delete-flight-modal').hidden = true">Cancel</button>
+            </div>
+          </form>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -1585,32 +1649,36 @@ function renderBreadcrumb(project, items = []) {
   `;
 }
 
+function missionStatus(project, key, autoDone = false) {
+  return Boolean(autoDone || project.mission_status?.[key]);
+}
+
 function renderMissionControl(project) {
   const groups = [
     {
       title: "AI Readiness",
       open: true,
       options: [
-        { label: "Knowledge Assessment", href: readinessHref(project, "help-center-readiness"), done: false },
-        { label: "Connect Zendesk Help Center", href: readinessHref(project, "connect-zendesk-help-center"), done: false },
-        { label: "Build a Simple Procedure", href: readinessHref(project, "build-simple-procedure"), done: false }
+        { key: "help-center-readiness", label: "Knowledge Assessment", href: readinessHref(project, "help-center-readiness"), done: missionStatus(project, "help-center-readiness") },
+        { key: "connect-zendesk-help-center", label: "Connect Zendesk Help Center", href: readinessHref(project, "connect-zendesk-help-center"), done: missionStatus(project, "connect-zendesk-help-center") },
+        { key: "build-simple-procedure", label: "Build a Simple Procedure", href: readinessHref(project, "build-simple-procedure"), done: missionStatus(project, "build-simple-procedure") }
       ]
     },
     {
       title: "Advanced Bot Configuration",
       open: false,
       options: [
-        { label: "Build an API Connection", href: airtableConfigHref(project), done: Boolean(project.airtable_table_name && project.airtable_key_column) },
-        { label: "Connect External Content", href: readinessHref(project, "connect-external-content"), done: false },
-        { label: "Build an Advanced Procedure using API calls", href: readinessHref(project, "build-advanced-procedure-api"), done: false }
+        { key: "build-api-connection", label: "Build an API Connection", href: airtableConfigHref(project), done: missionStatus(project, "build-api-connection", Boolean(project.airtable_table_name && project.airtable_key_column)) },
+        { key: "connect-external-content", label: "Connect External Content", href: readinessHref(project, "connect-external-content"), done: missionStatus(project, "connect-external-content") },
+        { key: "build-advanced-procedure-api", label: "Build an Advanced Procedure using API calls", href: readinessHref(project, "build-advanced-procedure-api"), done: missionStatus(project, "build-advanced-procedure-api") }
       ]
     },
     {
       title: "Agent Copilot",
       open: false,
       options: [
-        { label: "Task 1", href: readinessHref(project, "copilot-task-1"), done: false },
-        { label: "Task 2", href: readinessHref(project, "copilot-task-2"), done: false }
+        { key: "copilot-task-1", label: "Task 1", href: readinessHref(project, "copilot-task-1"), done: missionStatus(project, "copilot-task-1") },
+        { key: "copilot-task-2", label: "Task 2", href: readinessHref(project, "copilot-task-2"), done: missionStatus(project, "copilot-task-2") }
       ]
     }
   ];
@@ -1631,7 +1699,7 @@ function renderMissionControl(project) {
               ${group.options.map((option) => `
                 <div class="mission-option">
                   <span class="mission-task-title">
-                    <input type="checkbox" data-mission-checkbox ${option.done ? "checked" : ""}>
+                    <input type="checkbox" data-mission-checkbox data-mission-key="${escapeHtml(option.key)}" ${option.done ? "checked" : ""}>
                     <span>${escapeHtml(option.label)}</span>
                   </span>
                   <a class="mission-open-link" href="${escapeHtml(option.href)}">Open</a>
@@ -1652,7 +1720,24 @@ function renderMissionControl(project) {
             }
           };
           group.querySelectorAll("[data-mission-checkbox]").forEach((checkbox) => {
-            checkbox.addEventListener("change", updateMissionCount);
+            checkbox.addEventListener("change", async () => {
+              updateMissionCount();
+              checkbox.disabled = true;
+              try {
+                const response = await fetch("/projects/${project.id}/mission-status", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ key: checkbox.dataset.missionKey, done: checkbox.checked })
+                });
+                if (!response.ok) throw new Error("Mission status save failed.");
+              } catch {
+                checkbox.checked = !checkbox.checked;
+                updateMissionCount();
+                alert("Could not save mission status. Please try again.");
+              } finally {
+                checkbox.disabled = false;
+              }
+            });
           });
         });
       </script>
@@ -1934,6 +2019,49 @@ app.get("/projects/:id", requireUser, async (req, res, next) => {
       ${renderMissionControl(project)}
       ${renderAuthorizedUserManagement(project, authorizedUsers, canManageProject(project, req.user))}
     `));
+  } catch (error) {
+    next(error);
+  }
+});
+
+const MISSION_STATUS_KEYS = new Set([
+  "help-center-readiness",
+  "connect-zendesk-help-center",
+  "build-simple-procedure",
+  "build-api-connection",
+  "connect-external-content",
+  "build-advanced-procedure-api",
+  "copilot-task-1",
+  "copilot-task-2"
+]);
+
+app.post("/projects/:id/mission-status", requireUser, async (req, res, next) => {
+  try {
+    const project = await getProject(req.params.id, req.user);
+    if (!project || !canManageProject(project, req.user)) {
+      res.status(403).json({ error: "Not allowed." });
+      return;
+    }
+
+    const key = String(req.body.key || "");
+    if (!MISSION_STATUS_KEYS.has(key)) {
+      res.status(400).json({ error: "Unknown mission item." });
+      return;
+    }
+
+    if (req.body.done === true) {
+      await pool.query(
+        "UPDATE projects SET mission_status = COALESCE(mission_status, '{}'::jsonb) || jsonb_build_object($1::text, true), updated_at = now() WHERE id = $2",
+        [key, project.id]
+      );
+    } else {
+      await pool.query(
+        "UPDATE projects SET mission_status = COALESCE(mission_status, '{}'::jsonb) - $1::text, updated_at = now() WHERE id = $2",
+        [key, project.id]
+      );
+    }
+
+    res.json({ ok: true });
   } catch (error) {
     next(error);
   }
@@ -2765,6 +2893,22 @@ app.post("/projects/:id/details", requireUser, async (req, res, next) => {
   }
 });
 
+app.post("/projects/:id/delete", requireUser, async (req, res, next) => {
+  try {
+    const project = await getProject(req.params.id, req.user);
+    if (!project || !canManageProject(project, req.user)) {
+      res.status(403).send("Not allowed.");
+      return;
+    }
+
+    await pool.query("DELETE FROM projects WHERE id = $1", [project.id]);
+    setFlash(req, "Flight deleted.", "success");
+    res.redirect("/");
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/projects/:id/success-criteria", requireUser, async (req, res, next) => {
   try {
     const project = await getProject(req.params.id, req.user);
@@ -2854,7 +2998,6 @@ app.post("/projects/:id/authorized-users/:userId/delete", requireUser, async (re
 function moduleNav(project, active) {
   return `
     <div class="steps">
-      <a class="step" href="/projects/${project.id}">Flight details</a>
       <a class="step ${active === "module1" ? "active" : ""}" href="${airtableConfigHref(project)}">Airtable Configuration</a>
       <a class="step ${active === "module2" ? "active" : ""}" href="${aiAgentConfigHref(project)}">AI Agent Configuration</a>
     </div>
@@ -2874,20 +3017,15 @@ app.get("/projects/:id/readiness/:module/airtable-config", requireUser, async (r
     }
 
     const config = await getConfig(project.id);
-    const authorizedUsers = await getAuthorizedUsers(project.id);
     const currentModuleTitle = moduleTitle(req.params.module);
     let body = `
       ${renderBreadcrumb(project, [{ label: currentModuleTitle, href: readinessHref(project, req.params.module) }, { label: "Airtable Configuration" }])}
+      <div class="flight-config-title">${escapeHtml(project.project_name)}</div>
       ${moduleNav(project, "module1")}
-      <section class="card">
-        <h1>${escapeHtml(project.project_name)}</h1>
-        ${projectSummary(project)}
-      </section>
-      ${canManageProject(project, req.user) ? renderAuthorizedUserManagement(project, authorizedUsers, true) : ""}
+      ${renderPatForm(project, Boolean(config?.encrypted_pat))}
     `;
 
     if (!config?.encrypted_pat) {
-      body += renderPatForm(project);
       res.send(pageChrome(req, "Advanced Bot: Airtable API", body));
       return;
     }
@@ -2899,8 +3037,7 @@ app.get("/projects/:id/readiness/:module/airtable-config", requireUser, async (r
 
     if (project.airtable_base_id) {
       const tables = await fetchTables(pat, project.airtable_base_id);
-      body += renderTableSelection(project, tables);
-      body += renderCreateTable(project);
+      body += renderTableSetup(project, tables);
     }
 
     if (project.airtable_base_id && project.airtable_table_name) {
@@ -2924,16 +3061,18 @@ app.get("/projects/:id/readiness/:module/airtable-config", requireUser, async (r
   }
 });
 
-function renderPatForm(project) {
+function renderPatForm(project, tokenSaved = false) {
   return `
     <section class="card">
       <h2>Step 1: Confirm Airtable account</h2>
-      <p>Enter an Airtable Personal Access Token. The app will validate metadata access and store it encrypted in PostgreSQL.</p>
+      ${tokenSaved
+        ? '<div class="saved-token">Token Accepted / Saved</div>'
+        : '<p>Enter an Airtable Personal Access Token. The app will validate metadata access and store it encrypted in PostgreSQL.</p>'}
       <form method="post" action="/projects/${project.id}/airtable/pat">
-        <label for="pat">Personal Access Token</label>
+        <label for="pat">${tokenSaved ? "Replace Personal Access Token" : "Personal Access Token"}</label>
         <input id="pat" name="pat" type="password" required autocomplete="off">
         <p class="hint">For local testing, keep the PAT in your local environment. In production, the saved PAT is encrypted with <code>APP_SECRET</code>.</p>
-        <div class="actions"><button type="submit">Validate and save</button></div>
+        <div class="actions"><button type="submit">${tokenSaved ? "Validate and update" : "Validate and save"}</button></div>
       </form>
     </section>
   `;
@@ -3034,63 +3173,113 @@ function renderBaseSelection(project, bases) {
   `;
 }
 
-function renderTableSelection(project, tables) {
-  return `
-    <section class="card">
-      <h2>Select existing table</h2>
-      <form method="post" action="/projects/${project.id}/airtable/table/select">
-        <label for="table_id">Existing table</label>
-        <select id="table_id" name="table_id" required>
-          <option value="">Select a table</option>
-          ${tables.map((table) =>
-            `<option value="${escapeHtml(table.id)}" data-name="${escapeHtml(table.name)}" ${project.airtable_table_id === table.id ? "selected" : ""}>${escapeHtml(table.name)}</option>`
-          ).join("")}
-        </select>
-        <input type="hidden" id="table_name" name="table_name" value="${escapeHtml(project.airtable_table_name || "")}">
-        <div class="actions"><button type="submit">Use selected table</button></div>
-      </form>
-      <script>
-        document.getElementById("table_id")?.addEventListener("change", function () {
-          const selected = this.options[this.selectedIndex];
-          document.getElementById("table_name").value = selected ? selected.text : "";
-        });
-      </script>
-    </section>
-  `;
+function schemaPreviewItems(schemaType) {
+  return DEFAULT_SCHEMAS[schemaType].fields
+    .map((field) => `<li>${escapeHtml(field.name)}</li>`)
+    .join("");
 }
 
-function renderCreateTable(project) {
+function renderTableSetup(project, tables) {
+  const schemaPreviews = {
+    cx: DEFAULT_SCHEMAS.cx.fields.map((field) => field.name),
+    it: DEFAULT_SCHEMAS.it.fields.map((field) => field.name)
+  };
+
   return `
     <section class="card">
-      <h2>Create new table</h2>
-      <form method="post" action="/projects/${project.id}/airtable/table/create">
-        <div class="grid two">
-          <div>
-            <label for="schema_type">Schema</label>
-            <select id="schema_type" name="schema_type">
-              <option value="cx">CX default</option>
-              <option value="it">IT default</option>
-              <option value="custom">Custom</option>
-            </select>
+      <h2>Table Selection</h2>
+      <div class="actions">
+        <button type="button" data-table-mode-button="existing" onclick="setTableMode('existing')">Use existing table</button>
+        <button type="button" class="secondary" data-table-mode-button="create" onclick="setTableMode('create')">Create new table</button>
+      </div>
+
+      <div id="existing-table-panel" style="margin-top: 16px;">
+        <form method="post" action="/projects/${project.id}/airtable/table/select">
+          <label for="table_id">Existing table</label>
+          <select id="table_id" name="table_id" required>
+            <option value="">Select a table</option>
+            ${tables.map((table) =>
+              `<option value="${escapeHtml(table.id)}" data-name="${escapeHtml(table.name)}" ${project.airtable_table_id === table.id ? "selected" : ""}>${escapeHtml(table.name)}</option>`
+            ).join("")}
+          </select>
+          <input type="hidden" id="existing_table_name" name="table_name" value="${escapeHtml(project.airtable_table_name || "")}">
+          <div class="actions"><button type="submit">Use selected table</button></div>
+        </form>
+      </div>
+
+      <div id="create-table-panel" style="margin-top: 16px;" hidden>
+        <form method="post" action="/projects/${project.id}/airtable/table/create">
+          <div class="grid two">
+            <div>
+              <label for="schema_type">Schema</label>
+              <select id="schema_type" name="schema_type">
+                <option value="cx">CX default</option>
+                <option value="it">IT default</option>
+                <option value="custom">Custom</option>
+              </select>
+            </div>
+            <div>
+              <label for="create_table_name">Table name</label>
+              <input id="create_table_name" name="table_name" placeholder="My API Data" required>
+            </div>
           </div>
-          <div>
-            <label for="table_name">Table name</label>
-            <input id="table_name" name="table_name" placeholder="My API Data" required>
+          <div id="default-schema-preview" class="schema-preview">
+            <strong>Default columns preview</strong>
+            <ul>${schemaPreviewItems("cx")}</ul>
           </div>
-        </div>
-        <div class="grid two" style="margin-top: 16px;">
-          <div>
-            <label for="custom_columns">Custom column names</label>
-            <textarea id="custom_columns" name="custom_columns" placeholder="name&#10;DOB&#10;email"></textarea>
-            <p class="hint">Only used for custom schema. No spaces allowed.</p>
+          <div id="custom-schema-fields" class="grid two" style="margin-top: 16px;" hidden>
+            <div>
+              <label for="custom_columns">Custom column names</label>
+              <textarea id="custom_columns" name="custom_columns" placeholder="name&#10;DOB&#10;email"></textarea>
+              <p class="hint">Only used for custom schema. No spaces allowed.</p>
+            </div>
+            <div>
+              <label for="custom_samples">Custom sample data</label>
+              <textarea id="custom_samples" name="custom_samples" placeholder="name <> john doe&#10;DOB <> 1/1/1980&#10;email <> john@example.com"></textarea>
+            </div>
           </div>
-          <div>
-            <label for="custom_samples">Custom sample data</label>
-            <textarea id="custom_samples" name="custom_samples" placeholder="name <> john doe&#10;DOB <> 1/1/1980&#10;email <> john@example.com"></textarea>
-          </div>
-        </div>
-        <div class="actions"><button type="submit">Create table and sample data</button></div>
-      </form>
+          <div class="actions"><button type="submit">Create table and sample data</button></div>
+        </form>
+      </div>
+
+      <script>
+        function setTableMode(mode) {
+          const existingPanel = document.getElementById("existing-table-panel");
+          const createPanel = document.getElementById("create-table-panel");
+          existingPanel.hidden = mode !== "existing";
+          createPanel.hidden = mode !== "create";
+          document.querySelectorAll("[data-table-mode-button]").forEach((button) => {
+            const isActive = button.dataset.tableModeButton === mode;
+            button.classList.toggle("secondary", !isActive);
+          });
+        }
+
+        function updateSchemaPreview() {
+          const previews = ${JSON.stringify(schemaPreviews)};
+          const schemaType = document.getElementById("schema_type")?.value || "cx";
+          const preview = document.getElementById("default-schema-preview");
+          const customFields = document.getElementById("custom-schema-fields");
+          const isCustom = schemaType === "custom";
+          preview.hidden = isCustom;
+          customFields.hidden = !isCustom;
+          if (!isCustom) {
+            const list = preview.querySelector("ul");
+            list.innerHTML = "";
+            previews[schemaType].forEach((fieldName) => {
+              const item = document.createElement("li");
+              item.textContent = fieldName;
+              list.appendChild(item);
+            });
+          }
+        }
+
+        document.getElementById("table_id")?.addEventListener("change", function () {
+          const selected = this.options[this.selectedIndex];
+          document.getElementById("existing_table_name").value = selected ? selected.text : "";
+        });
+        document.getElementById("schema_type")?.addEventListener("change", updateSchemaPreview);
+        updateSchemaPreview();
+      </script>
     </section>
   `;
 }
@@ -3279,6 +3468,7 @@ app.get("/projects/:id/readiness/:module/ai-agent-config", requireUser, async (r
     const config = await getConfig(project.id);
     const selectedColumns = config?.selected_columns || [];
     const sampleRow = config?.sample_row || {};
+    const airtableToken = config?.encrypted_pat ? decryptSecret(config.encrypted_pat) : "";
     const activeTab = req.query.tab || "confirm";
     const currentModuleTitle = moduleTitle(req.params.module);
 
@@ -3287,19 +3477,19 @@ app.get("/projects/:id/readiness/:module/ai-agent-config", requireUser, async (r
       ${moduleNav(project, "module2")}
       <section class="card">
         <h1>Zendesk AI Agent Configuration</h1>
-        <p>Use these guided tabs to copy values from this app into Zendesk Actions > API Integrations > Add integration.</p>
+        <p>Time to set up the bot! Log into your Zendesk account and navigate to AI Agents, then follow the instructions below.</p>
       </section>
-      ${renderModule2Tabs(project, selectedColumns, sampleRow, activeTab, req.params.module)}
+      ${renderModule2Tabs(project, selectedColumns, sampleRow, activeTab, req.params.module, airtableToken)}
     `));
   } catch (error) {
     next(error);
   }
 });
 
-function renderModule2Tabs(project, selectedColumns, sampleRow, activeTab, moduleSlug = "build-api-connection") {
+function renderModule2Tabs(project, selectedColumns, sampleRow, activeTab, moduleSlug = "build-api-connection", airtableToken = "") {
   const tabs = [
-    ["confirm", "SE Bot"],
-    ["environment", "Environment"],
+    ["confirm", "Add Integration"],
+    ["environment", "Environment Details"],
     ["auth", "Authorization and Headers"],
     ["request", "Request Parameters"],
     ["test", "Test Integration"],
@@ -3314,8 +3504,9 @@ function renderModule2Tabs(project, selectedColumns, sampleRow, activeTab, modul
     ], "Placeholder for Zendesk environment screenshot."),
     auth: renderCopyPanel("Authorization and Headers", [
       ["Authorization type", "Bearer token"],
+      ["Token", airtableToken || "No token saved"],
       ["Header key", "Authorization"],
-      ["Header value", "Bearer <server-side-token-or-proxy-secret>"],
+      ["Header value", "Bearer {{apiToken}}"],
       ["Content-Type", "application/json"]
     ], "Placeholder for authorization and headers screenshot."),
     request: renderCopyPanel("Request Parameters", [
@@ -3346,13 +3537,10 @@ function renderModule2Tabs(project, selectedColumns, sampleRow, activeTab, modul
 
 function renderBotConfirmation(project, moduleSlug = "build-api-connection") {
   return `
-    <h2>Step 1: SE Create Bot</h2>
-    <p>Confirm that the SE has already built the Zendesk bot they want to use.</p>
+    <h2>Step 1: Add API Integration</h2>
+    <p>Use left-hand menu to navigate to Actions > API Integrations. Click "Add Integration" in top right corner. <br> <br> Give your integration a name and (optional) description, then click "Save." <br><br>(Do not check "Set up as an 'auth only' integration").</p>
     <form method="post" action="${aiAgentConfigHref(project, moduleSlug)}/bot-confirmation">
-      <div class="checkbox-list">
-        <label><input type="checkbox" name="confirmed" value="true" ${project.module2_bot_confirmed ? "checked" : ""}> Yes, the bot has been built.</label>
-      </div>
-      <div class="actions"><button type="submit">Save confirmation</button></div>
+      <div class="actions"><button type="submit">Next Step</button></div>
     </form>
   `;
 }
@@ -3386,8 +3574,7 @@ function renderSuccessScenarios(selectedColumns, sampleRow) {
     <p>Use the column name as the key so the bot can identify the information. Copy each JSONata expression into Zendesk.</p>
     ${selectedColumns.map((column, index) => renderCopyPanel(`Column: ${column}`, [
       ["Key", column],
-      ["Query", `data.records.fields.${column}`],
-      ["Sample value", sampleRow[column] || ""]
+      ["Query", `data.records.fields.${column}`]
     ], index === 0 ? "Placeholder for success scenario screenshot." : "")).join("")}
   `;
 }
@@ -3401,10 +3588,10 @@ async function handleBotConfirmation(req, res, next) {
     }
     await pool.query(
       "UPDATE projects SET module2_bot_confirmed = $1, updated_at = now() WHERE id = $2",
-      [req.body.confirmed === "true", project.id]
+      [true, project.id]
     );
     setFlash(req, "Bot confirmation saved.", "success");
-    res.redirect(aiAgentConfigHref(project, req.params.module || "build-api-connection"));
+    res.redirect(`${aiAgentConfigHref(project, req.params.module || "build-api-connection")}?tab=environment`);
   } catch (error) {
     next(error);
   }
