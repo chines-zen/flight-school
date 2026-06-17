@@ -183,6 +183,15 @@ async function migrate() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
 
+    CREATE TABLE IF NOT EXISTS project_knowledge_assessment (
+      project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+      source_url TEXT,
+      subdomain TEXT,
+      result JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
     CREATE INDEX IF NOT EXISTS idx_projects_owner_email ON projects (lower(owner_email));
     CREATE INDEX IF NOT EXISTS idx_authorized_users_email ON project_authorized_users (lower(email));
   `);
@@ -1015,6 +1024,24 @@ async function upsertAirtableConfig(projectId, values) {
 async function getConfig(projectId) {
   const result = await pool.query("SELECT * FROM project_airtable_config WHERE project_id = $1", [projectId]);
   return result.rows[0] || null;
+}
+
+async function getKnowledgeAssessment(projectId) {
+  const result = await pool.query("SELECT * FROM project_knowledge_assessment WHERE project_id = $1", [projectId]);
+  return result.rows[0] || null;
+}
+
+async function saveKnowledgeAssessment(projectId, sourceUrl, subdomain, result) {
+  await pool.query(
+    `INSERT INTO project_knowledge_assessment (project_id, source_url, subdomain, result, updated_at)
+     VALUES ($1, $2, $3, $4, now())
+     ON CONFLICT (project_id) DO UPDATE
+       SET source_url = EXCLUDED.source_url,
+           subdomain = EXCLUDED.subdomain,
+           result = EXCLUDED.result,
+           updated_at = now()`,
+    [projectId, sourceUrl, subdomain, JSON.stringify(result)]
+  );
 }
 
 async function getAirtableToken(projectId) {
@@ -2354,13 +2381,24 @@ function renderAssessmentResult(result) {
   `;
 }
 
-function renderKnowledgeAssessment(project, { url = "", result = null, error = "" } = {}) {
+function formatDateTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return escapeHtml(String(value));
+  return date.toLocaleString();
+}
+
+function renderKnowledgeAssessment(project, { url = "", result = null, error = "", savedAt = null } = {}) {
   const placeholder = READINESS_PLACEHOLDERS[KNOWLEDGE_ASSESSMENT_SLUG];
   const llmStatus = llmConfigStatus();
   const keyWarning = llmStatus.ready
     ? ""
     : `<div class="flash info">Set <code>${escapeHtml(llmStatus.envVar)}</code> in your <code>.env</code> file to enable scoring with ${escapeHtml(llmStatus.model)}. <a href="${escapeHtml(llmStatus.keyUrl)}" target="_blank" rel="noopener">Get a key</a>.</div>`;
   const errorMarkup = error ? `<div class="flash error">${escapeHtml(error)}</div>` : "";
+  const savedNote = result && savedAt
+    ? `<p class="hint">Showing saved results from <strong>${escapeHtml(formatDateTime(savedAt))}</strong>${url ? ` for <code>${escapeHtml(url)}</code>` : ""}. Re-running updates the saved report.</p>`
+    : "";
+  const runButtonLabel = result ? "Re-run Assessment" : "Run Assessment";
 
   return pageChrome(project._req, placeholder.title, `
     <div class="breadcrumb"><a href="/">Flights</a> / <a href="/projects/${project.id}">${escapeHtml(project.project_name)}</a> / ${escapeHtml(placeholder.title)}</div>
@@ -2375,11 +2413,12 @@ function renderKnowledgeAssessment(project, { url = "", result = null, error = "
           placeholder="https://acme.zendesk.com/hc/en-us" value="${escapeHtml(url)}" required autocomplete="off">
         <p class="hint">Paste a full Help Center URL — we will extract the subdomain automatically.</p>
         <div class="actions">
-          <button type="submit" data-run-button>Run Assessment</button>
+          <button type="submit" data-run-button>${runButtonLabel}</button>
           <span class="kb-running" data-run-status hidden>Running assessment… this can take up to a minute.</span>
           <a class="button secondary" href="/projects/${project.id}">Back to Flight details</a>
         </div>
       </form>
+      ${savedNote}
     </section>
     ${result ? renderAssessmentResult(result) : ""}
     <script>
@@ -2403,7 +2442,12 @@ app.get("/projects/:id/readiness/:module", requireUser, async (req, res, next) =
 
     if (req.params.module === KNOWLEDGE_ASSESSMENT_SLUG) {
       project._req = req;
-      res.send(renderKnowledgeAssessment(project, {}));
+      const saved = await getKnowledgeAssessment(project.id);
+      res.send(renderKnowledgeAssessment(project, {
+        url: saved?.source_url || "",
+        result: saved?.result || null,
+        savedAt: saved?.updated_at || null
+      }));
       return;
     }
 
@@ -2440,7 +2484,9 @@ app.post(`/projects/:id/readiness/${KNOWLEDGE_ASSESSMENT_SLUG}/run`, requireUser
     const url = (req.body.knowledge_source_url || "").trim();
     try {
       const result = await runKnowledgeAssessment(url, project);
-      res.send(renderKnowledgeAssessment(project, { url, result }));
+      await saveKnowledgeAssessment(project.id, url, result.subdomain, result);
+      const saved = await getKnowledgeAssessment(project.id);
+      res.send(renderKnowledgeAssessment(project, { url, result, savedAt: saved?.updated_at || null }));
     } catch (assessmentError) {
       res.send(renderKnowledgeAssessment(project, { url, error: assessmentError.message }));
     }
