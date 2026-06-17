@@ -13,9 +13,28 @@ const APP_SECRET = process.env.APP_SECRET || "local-development-secret-change-be
 const AIRTABLE_META_BASE_URL = "https://api.airtable.com/v0/meta";
 const AIRTABLE_DATA_BASE_URL = "https://api.airtable.com/v0";
 
+const LLM_PROVIDER = (process.env.LLM_PROVIDER || "gemini").toLowerCase();
+
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
-const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
+const GEMINI_API_BASE = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta";
+
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const OPENAI_BASE_URL = (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
+
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
+const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-3-5-sonnet-latest";
+const ANTHROPIC_BASE_URL = (process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com/v1").replace(/\/$/, "");
+const ANTHROPIC_VERSION = process.env.ANTHROPIC_VERSION || "2023-06-01";
+
+const BEDROCK_BASE_URL = (process.env.AWS_ENDPOINT_URL_BEDROCK_RUNTIME || process.env.BEDROCK_BASE_URL || "").replace(/\/$/, "");
+const BEDROCK_BEARER_TOKEN = process.env.AWS_BEARER_TOKEN_BEDROCK || process.env.BEDROCK_API_KEY || "";
+const BEDROCK_MODEL = process.env.BEDROCK_MODEL || "us.anthropic.claude-sonnet-4-6";
+const BEDROCK_ANTHROPIC_VERSION = process.env.BEDROCK_ANTHROPIC_VERSION || "bedrock-2023-05-31";
+
+const LLM_MAX_TOKENS = Number(process.env.LLM_MAX_TOKENS || 8192);
+
 const KB_MAX_ARTICLES_SCANNED = Number(process.env.KB_MAX_ARTICLES_SCANNED || 300);
 const KB_MAX_ARTICLES_ANALYZED = Number(process.env.KB_MAX_ARTICLES_ANALYZED || 12);
 const KB_ARTICLE_EXCERPT_CHARS = 2200;
@@ -1817,17 +1836,68 @@ function averageScore(values) {
   return nums.reduce((sum, n) => sum + n, 0) / nums.length;
 }
 
-async function geminiGenerateJSON(prompt) {
-  if (!GEMINI_API_KEY) {
-    throw new Error("GEMINI_API_KEY is not configured. Add it to your .env file to run the Knowledge Assessment.");
+function parseJsonLoose(text, providerLabel) {
+  if (!text) throw new Error(`${providerLabel} returned an empty response.`);
+  try {
+    return JSON.parse(text);
+  } catch {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (match) {
+      try {
+        return JSON.parse(match[0]);
+      } catch {
+        /* fall through */
+      }
+    }
+    throw new Error(`Could not parse ${providerLabel} JSON output.`);
   }
+}
+
+function llmConfigStatus() {
+  if (LLM_PROVIDER === "openai") {
+    return {
+      provider: "openai",
+      ready: Boolean(OPENAI_API_KEY),
+      model: `OpenAI ${OPENAI_MODEL}`,
+      envVar: "OPENAI_API_KEY",
+      keyUrl: "https://platform.openai.com/api-keys"
+    };
+  }
+  if (LLM_PROVIDER === "anthropic" || LLM_PROVIDER === "claude") {
+    return {
+      provider: "anthropic",
+      ready: Boolean(ANTHROPIC_API_KEY),
+      model: `Anthropic ${ANTHROPIC_MODEL}`,
+      envVar: "ANTHROPIC_API_KEY",
+      keyUrl: "https://console.anthropic.com/settings/keys"
+    };
+  }
+  if (LLM_PROVIDER === "bedrock") {
+    return {
+      provider: "bedrock",
+      ready: Boolean(BEDROCK_BEARER_TOKEN && BEDROCK_BASE_URL),
+      model: `Bedrock ${BEDROCK_MODEL}`,
+      envVar: BEDROCK_BASE_URL ? "AWS_BEARER_TOKEN_BEDROCK" : "AWS_ENDPOINT_URL_BEDROCK_RUNTIME / AWS_BEARER_TOKEN_BEDROCK",
+      keyUrl: "https://ai-gateway.zende.sk"
+    };
+  }
+  return {
+    provider: "gemini",
+    ready: Boolean(GEMINI_API_KEY),
+    model: `Gemini ${GEMINI_MODEL}`,
+    envVar: "GEMINI_API_KEY",
+    keyUrl: "https://aistudio.google.com/app/apikey"
+  };
+}
+
+async function geminiGenerateJSON(prompt) {
   const url = `${GEMINI_API_BASE}/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.2, responseMimeType: "application/json" }
+      generationConfig: { temperature: 0.2, responseMimeType: "application/json", maxOutputTokens: LLM_MAX_TOKENS }
     })
   });
   const text = await response.text();
@@ -1838,24 +1908,113 @@ async function geminiGenerateJSON(prompt) {
     throw new Error(`Gemini returned an unreadable response (HTTP ${response.status}).`);
   }
   if (!response.ok) {
-    const message = data?.error?.message || response.statusText;
-    throw new Error(`Gemini API ${response.status}: ${message}`);
+    throw new Error(`Gemini API ${response.status}: ${data?.error?.message || response.statusText}`);
   }
   const out = (data?.candidates?.[0]?.content?.parts || []).map((part) => part.text || "").join("");
-  if (!out) throw new Error("Gemini returned an empty response.");
+  return parseJsonLoose(out, "Gemini");
+}
+
+async function openaiGenerateJSON(prompt) {
+  const response = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${OPENAI_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      temperature: 0.2,
+      max_tokens: LLM_MAX_TOKENS,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: "You are an expert Zendesk Help Center content auditor. Respond with a single valid JSON object only." },
+        { role: "user", content: prompt }
+      ]
+    })
+  });
+  const text = await response.text();
+  let data;
   try {
-    return JSON.parse(out);
+    data = JSON.parse(text);
   } catch {
-    const match = out.match(/\{[\s\S]*\}/);
-    if (match) {
-      try {
-        return JSON.parse(match[0]);
-      } catch {
-        /* fall through */
-      }
-    }
-    throw new Error("Could not parse Gemini JSON output.");
+    throw new Error(`OpenAI returned an unreadable response (HTTP ${response.status}).`);
   }
+  if (!response.ok) {
+    throw new Error(`OpenAI API ${response.status}: ${data?.error?.message || response.statusText}`);
+  }
+  const out = data?.choices?.[0]?.message?.content || "";
+  return parseJsonLoose(out, "OpenAI");
+}
+
+async function anthropicGenerateJSON(prompt) {
+  const response = await fetch(`${ANTHROPIC_BASE_URL}/messages`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": ANTHROPIC_API_KEY,
+      "anthropic-version": ANTHROPIC_VERSION
+    },
+    body: JSON.stringify({
+      model: ANTHROPIC_MODEL,
+      max_tokens: LLM_MAX_TOKENS,
+      temperature: 0.2,
+      system: "You are an expert Zendesk Help Center content auditor. Respond with a single valid JSON object only, with no markdown fences or commentary.",
+      messages: [{ role: "user", content: prompt }]
+    })
+  });
+  const text = await response.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(`Anthropic returned an unreadable response (HTTP ${response.status}).`);
+  }
+  if (!response.ok) {
+    throw new Error(`Anthropic API ${response.status}: ${data?.error?.message || response.statusText}`);
+  }
+  const out = (data?.content || []).map((part) => part.text || "").join("");
+  return parseJsonLoose(out, "Anthropic");
+}
+
+async function bedrockGenerateJSON(prompt) {
+  const url = `${BEDROCK_BASE_URL}/model/${BEDROCK_MODEL}/invoke`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${BEDROCK_BEARER_TOKEN}`
+    },
+    body: JSON.stringify({
+      anthropic_version: BEDROCK_ANTHROPIC_VERSION,
+      max_tokens: LLM_MAX_TOKENS,
+      temperature: 0.2,
+      system: "You are an expert Zendesk Help Center content auditor. Respond with a single valid JSON object only, with no markdown fences or commentary.",
+      messages: [{ role: "user", content: [{ type: "text", text: prompt }] }]
+    })
+  });
+  const text = await response.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(`Bedrock returned an unreadable response (HTTP ${response.status}).`);
+  }
+  if (!response.ok) {
+    throw new Error(`Bedrock API ${response.status}: ${data?.message || data?.error?.message || data?.error || response.statusText}`);
+  }
+  const out = (data?.content || []).map((part) => part.text || "").join("");
+  return parseJsonLoose(out, "Bedrock");
+}
+
+async function generateAuditJSON(prompt) {
+  const status = llmConfigStatus();
+  if (!status.ready) {
+    throw new Error(`${status.envVar} is not configured. Add it to your .env file to run the Knowledge Assessment.`);
+  }
+  if (status.provider === "openai") return openaiGenerateJSON(prompt);
+  if (status.provider === "anthropic") return anthropicGenerateJSON(prompt);
+  if (status.provider === "bedrock") return bedrockGenerateJSON(prompt);
+  return geminiGenerateJSON(prompt);
 }
 
 function buildAuditPrompt(subdomain, sampled, project) {
@@ -1938,7 +2097,7 @@ async function runKnowledgeAssessment(inputUrl, project) {
     .slice(0, KB_MAX_ARTICLES_ANALYZED);
 
   const prompt = buildAuditPrompt(subdomain, sampled, project);
-  const analysis = await geminiGenerateJSON(prompt);
+  const analysis = await generateAuditJSON(prompt);
 
   const perArticleById = new Map();
   for (const row of analysis.per_article || []) {
@@ -1966,7 +2125,7 @@ async function runKnowledgeAssessment(inputUrl, project) {
     subdomain,
     runId: crypto.randomUUID(),
     runAt: new Date().toISOString(),
-    model: GEMINI_MODEL,
+    model: llmConfigStatus().model,
     totalSeen: rawArticles.length,
     totalAnalyzed: sampled.length,
     labelHealth,
@@ -2184,9 +2343,10 @@ function renderAssessmentResult(result) {
 
 function renderKnowledgeAssessment(project, { url = "", result = null, error = "" } = {}) {
   const placeholder = READINESS_PLACEHOLDERS[KNOWLEDGE_ASSESSMENT_SLUG];
-  const keyWarning = GEMINI_API_KEY
+  const llmStatus = llmConfigStatus();
+  const keyWarning = llmStatus.ready
     ? ""
-    : `<div class="flash info">Set <code>GEMINI_API_KEY</code> in your <code>.env</code> file to enable scoring. <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Get a key</a>.</div>`;
+    : `<div class="flash info">Set <code>${escapeHtml(llmStatus.envVar)}</code> in your <code>.env</code> file to enable scoring with ${escapeHtml(llmStatus.model)}. <a href="${escapeHtml(llmStatus.keyUrl)}" target="_blank" rel="noopener">Get a key</a>.</div>`;
   const errorMarkup = error ? `<div class="flash error">${escapeHtml(error)}</div>` : "";
 
   return pageChrome(project._req, placeholder.title, `
