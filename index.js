@@ -13,6 +13,13 @@ const APP_SECRET = process.env.APP_SECRET || "local-development-secret-change-be
 const AIRTABLE_META_BASE_URL = "https://api.airtable.com/v0/meta";
 const AIRTABLE_DATA_BASE_URL = "https://api.airtable.com/v0";
 
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
+const KB_MAX_ARTICLES_SCANNED = Number(process.env.KB_MAX_ARTICLES_SCANNED || 300);
+const KB_MAX_ARTICLES_ANALYZED = Number(process.env.KB_MAX_ARTICLES_ANALYZED || 12);
+const KB_ARTICLE_EXCERPT_CHARS = 2200;
+
 const DEFAULT_SCHEMAS = {
   cx: {
     label: "CX",
@@ -457,6 +464,67 @@ function layout(title, body) {
         .grid { display: grid; gap: 16px; }
         .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        .kb-metrics {
+          display: grid;
+          gap: 12px;
+          grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+          margin-bottom: 8px;
+        }
+        .kb-metric {
+          background: #f3f5f5;
+          border: 1px solid var(--zd-border);
+          border-radius: 10px;
+          padding: 14px 16px;
+        }
+        .kb-metric .num { color: var(--zd-green); font-size: 26px; font-weight: 800; line-height: 1.1; }
+        .kb-metric .num small { color: var(--zd-subtle); font-size: 14px; font-weight: 700; }
+        .kb-metric .lbl { color: var(--zd-subtle); font-size: 12px; font-weight: 700; margin-top: 4px; text-transform: uppercase; }
+        .kb-scores { display: grid; gap: 0; }
+        .kb-score-row {
+          align-items: center;
+          border-bottom: 1px solid var(--zd-border);
+          display: flex;
+          gap: 12px;
+          justify-content: space-between;
+          padding: 8px 0;
+        }
+        .kb-score-row .kb-score-label { color: var(--zd-text); font-weight: 600; }
+        .kb-score-val { align-items: center; display: flex; gap: 10px; min-width: 160px; }
+        .kb-bar { background: #e3e7e9; border-radius: 999px; flex: 1; height: 8px; overflow: hidden; }
+        .kb-bar > span { background: var(--zd-mint); display: block; height: 100%; }
+        .kb-bar.low > span { background: var(--zd-danger); }
+        .kb-bar.mid > span { background: #e9a23b; }
+        .kb-score-num { font-variant-numeric: tabular-nums; font-weight: 700; min-width: 34px; text-align: right; }
+        .kb-tag {
+          background: #e8f5f3;
+          border-radius: 999px;
+          color: var(--zd-green);
+          display: inline-block;
+          font-size: 12px;
+          font-weight: 700;
+          margin: 2px 4px 2px 0;
+          padding: 4px 10px;
+        }
+        .kb-tag.retire { background: #fdecee; color: var(--zd-danger); }
+        .kb-action { border-bottom: 1px solid var(--zd-border); padding: 12px 0; }
+        .kb-action:last-child { border-bottom: none; }
+        .kb-action .kb-action-title { font-weight: 700; }
+        .kb-badge {
+          border-radius: 999px;
+          display: inline-block;
+          font-size: 11px;
+          font-weight: 800;
+          margin-left: 6px;
+          padding: 2px 8px;
+          text-transform: uppercase;
+        }
+        .kb-badge.high { background: #fdecee; color: var(--zd-danger); }
+        .kb-badge.med { background: #fff4e5; color: #ad5e00; }
+        .kb-badge.low { background: #eef0f2; color: var(--zd-subtle); }
+        .kb-exemplar { border: 1px solid var(--zd-border); border-radius: 10px; margin-bottom: 12px; padding: 14px 16px; }
+        .kb-exemplar h4 { color: var(--zd-green); margin: 0 0 8px; }
+        .kb-meta-line { color: var(--zd-subtle); font-size: 13px; margin-bottom: 12px; }
+        .kb-running { color: var(--zd-subtle); font-weight: 650; }
         h1, h2, h3 { color: var(--zd-green); line-height: 1.2; margin: 0 0 16px; }
         p { margin: 0 0 16px; }
         label {
@@ -1296,11 +1364,18 @@ function readinessHref(project, slug) {
 function renderMissionControl(project) {
   const groups = [
     {
-      title: "Basic Bot Configuration",
+      title: "AI Readiness",
       open: true,
       options: [
-        { label: "Option 1", href: readinessHref(project, "basic-option-1") },
-        { label: "Option 2", href: readinessHref(project, "basic-option-2") }
+        { label: "Knowledge Assessment", href: readinessHref(project, "ai-readiness-knowledge-assessment") }
+      ]
+    },
+    {
+      title: "Basic Bot Configuration",
+      open: false,
+      options: [
+        { label: "Help Center Connection", href: readinessHref(project, "basic-option-1") },
+        { label: "Procedures", href: readinessHref(project, "basic-option-2") }
       ]
     },
     {
@@ -1362,8 +1437,9 @@ function renderChecklistItem(label, done) {
 }
 
 const READINESS_PLACEHOLDERS = {
-  "basic-option-1": { title: "Basic Bot Configuration - Option 1", description: "Placeholder for the first Basic Bot configuration path." },
-  "basic-option-2": { title: "Basic Bot Configuration - Option 2", description: "Placeholder for the second Basic Bot configuration path." },
+  "basic-option-1": { title: "Basic Bot Configuration - Help Center Connection", description: "Placeholder for the Help Center Connection configuration path." },
+  "basic-option-2": { title: "Basic Bot Configuration - Procedures", description: "Placeholder for the Procedures configuration path." },
+  "ai-readiness-knowledge-assessment": { title: "AI Readiness - Knowledge Assessment", description: "Placeholder for the Knowledge Assessment configuration path." },
   "advanced-option-1": { title: "Advanced Bot Configuration - Option 1", description: "Placeholder for an additional Advanced Bot configuration path." },
   "advanced-option-2": { title: "Advanced Bot Configuration - Option 2", description: "Placeholder for an additional Advanced Bot configuration path." },
   "copilot-option-1": { title: "Copilot Configuration - Option 1", description: "Placeholder for the first Copilot configuration path." },
@@ -1594,11 +1670,567 @@ app.get("/projects/:id", requireUser, async (req, res, next) => {
   }
 });
 
+const KNOWLEDGE_ASSESSMENT_SLUG = "ai-readiness-knowledge-assessment";
+
+function parseZendeskSubdomain(input) {
+  const raw = String(input || "").trim();
+  if (!raw) return null;
+  if (/^[a-z0-9][a-z0-9-]*$/i.test(raw)) return raw.toLowerCase();
+  let host;
+  try {
+    const url = new URL(raw.includes("://") ? raw : `https://${raw}`);
+    host = url.hostname;
+  } catch {
+    return null;
+  }
+  if (!host) return null;
+  const zendeskMatch = host.match(/^([a-z0-9-]+)\.zendesk\.com$/i);
+  if (zendeskMatch) return zendeskMatch[1].toLowerCase();
+  const firstLabel = host.split(".")[0];
+  return firstLabel ? firstLabel.toLowerCase() : null;
+}
+
+async function zendeskGet(subdomain, path) {
+  const url = `https://${subdomain}.zendesk.com${path}`;
+  const response = await fetch(url, { headers: { Accept: "application/json" } });
+  const text = await response.text();
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = {};
+  }
+  if (!response.ok) {
+    const message = data?.error?.title || data?.error || data?.description || response.statusText;
+    throw new Error(`Zendesk API ${response.status}: ${message}`);
+  }
+  return data;
+}
+
+function nextPagePath(nextPage) {
+  if (!nextPage) return null;
+  try {
+    const url = new URL(nextPage);
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchHelpCenterArticles(subdomain) {
+  const byId = new Map();
+  let path = "/api/v2/help_center/articles.json?per_page=100";
+  let pages = 0;
+  while (path && byId.size < KB_MAX_ARTICLES_SCANNED && pages < 25) {
+    const data = await zendeskGet(subdomain, path);
+    for (const article of data.articles || []) {
+      if (article.draft) continue;
+      const existing = byId.get(article.id);
+      const isSource = article.locale && article.source_locale && article.locale === article.source_locale;
+      if (!existing || isSource) byId.set(article.id, article);
+    }
+    pages += 1;
+    path = nextPagePath(data.next_page);
+  }
+  return [...byId.values()];
+}
+
+async function fetchHelpCenterTaxonomy(subdomain) {
+  const sections = new Map();
+  const categories = new Map();
+  try {
+    const data = await zendeskGet(subdomain, "/api/v2/help_center/sections.json?per_page=100");
+    for (const section of data.sections || []) sections.set(section.id, { name: section.name, category_id: section.category_id });
+  } catch {
+    /* taxonomy is best-effort */
+  }
+  try {
+    const data = await zendeskGet(subdomain, "/api/v2/help_center/categories.json?per_page=100");
+    for (const category of data.categories || []) categories.set(category.id, category.name);
+  } catch {
+    /* taxonomy is best-effort */
+  }
+  return { sections, categories };
+}
+
+function htmlToText(html) {
+  return String(html || "")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&#39;/gi, "'")
+    .replace(/&quot;/gi, '"')
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function countWords(text) {
+  return text ? text.split(/\s+/).filter(Boolean).length : 0;
+}
+
+function computeLabelHealth(articles) {
+  const counts = new Map();
+  let zeroLabel = 0;
+  for (const article of articles) {
+    const labels = article.label_names || [];
+    if (!labels.length) zeroLabel += 1;
+    for (const label of labels) counts.set(label, (counts.get(label) || 0) + 1);
+  }
+  const top = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([label, count]) => ({ label, count }));
+  return {
+    total: articles.length,
+    zeroLabel,
+    zeroLabelPct: articles.length ? Math.round((zeroLabel / articles.length) * 100) : 0,
+    uniqueLabels: counts.size,
+    top
+  };
+}
+
+function clampScore(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 0;
+  return Math.max(0, Math.min(5, num));
+}
+
+function weightedCustomerService(scores) {
+  return clampScore(
+    clampScore(scores.clarity) * 0.2 +
+      clampScore(scores.actionability) * 0.2 +
+      clampScore(scores.accuracy) * 0.2 +
+      clampScore(scores.troubleshooting) * 0.15 +
+      clampScore(scores.empathy) * 0.1 +
+      clampScore(scores.findability) * 0.1 +
+      clampScore(scores.accessibility) * 0.05
+  );
+}
+
+function averageScore(values) {
+  const nums = values.map(clampScore);
+  if (!nums.length) return 0;
+  return nums.reduce((sum, n) => sum + n, 0) / nums.length;
+}
+
+async function geminiGenerateJSON(prompt) {
+  if (!GEMINI_API_KEY) {
+    throw new Error("GEMINI_API_KEY is not configured. Add it to your .env file to run the Knowledge Assessment.");
+  }
+  const url = `${GEMINI_API_BASE}/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.2, responseMimeType: "application/json" }
+    })
+  });
+  const text = await response.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(`Gemini returned an unreadable response (HTTP ${response.status}).`);
+  }
+  if (!response.ok) {
+    const message = data?.error?.message || response.statusText;
+    throw new Error(`Gemini API ${response.status}: ${message}`);
+  }
+  const out = (data?.candidates?.[0]?.content?.parts || []).map((part) => part.text || "").join("");
+  if (!out) throw new Error("Gemini returned an empty response.");
+  try {
+    return JSON.parse(out);
+  } catch {
+    const match = out.match(/\{[\s\S]*\}/);
+    if (match) {
+      try {
+        return JSON.parse(match[0]);
+      } catch {
+        /* fall through */
+      }
+    }
+    throw new Error("Could not parse Gemini JSON output.");
+  }
+}
+
+function buildAuditPrompt(subdomain, sampled, project) {
+  const articlesForPrompt = sampled.map((article) => ({
+    id: article.id,
+    title: article.title,
+    html_url: article.html_url,
+    locale: article.locale,
+    labels: article.label_names || [],
+    section: article.section_name || null,
+    category: article.category_name || null,
+    updated_at: article.updated_at,
+    word_count: article.word_count,
+    excerpt: article.text_excerpt
+  }));
+  return `You are an expert Zendesk Help Center content auditor. Audit the articles below for a customer named "${project.client || project.project_name}".
+
+Score every article on two rubrics using a 0-5 scale where 5=Exemplary, 4=Strong, 3=Adequate, 2=Weak, 1=Poor, 0=Not present.
+
+Customer Service quality criteria: clarity, actionability, accuracy (accuracy/completeness), troubleshooting (troubleshooting readiness), empathy (empathy & tone), findability (findability & next steps), accessibility (accessibility & inclusion).
+LLM/machine readability criteria: headings (heading hierarchy), chunkability, procedures (procedure semantics), inline_semantics, terminology (terminology consistency), links_text (link/text semantics), metadata (metadata completeness), structured_data (structured data suitability), i18n (i18n readiness).
+
+Rules:
+- Do not fabricate products, plans, limits, or UI labels. If a criterion cannot be assessed, score conservatively.
+- Keep all text fields concise and leadership-ready.
+- "quality_snapshot" values must be the AVERAGE (one decimal) across the analyzed articles for each criterion.
+- Provide up to 5 "top_actions", impact one of High/Med/Low, effort one of Low/Med/High.
+- Provide up to 2 "exemplars" with before to after micro-edits. improved_title must be <= 65 characters. tldr is 3-6 short bullets.
+- "per_article" must include one entry per analyzed article with its weighted CS overall and unweighted LLM overall (one decimal).
+
+Return ONLY a JSON object with EXACTLY this shape:
+{
+  "quality_snapshot": {
+    "customer_service": { "clarity": 0, "actionability": 0, "accuracy": 0, "troubleshooting": 0, "empathy": 0, "findability": 0, "accessibility": 0 },
+    "llm_readability": { "headings": 0, "chunkability": 0, "procedures": 0, "inline_semantics": 0, "terminology": 0, "links_text": 0, "metadata": 0, "structured_data": 0, "i18n": 0 }
+  },
+  "systemic_gaps": ["", "", ""],
+  "top_actions": [{ "action": "", "impact": "High", "effort": "Low", "why": "" }],
+  "label_taxonomy": {
+    "canonical": [""],
+    "synonyms_to_merge": [{ "canonical": "", "synonyms": ["", ""] }],
+    "retire": [""],
+    "namespacing": [""]
+  },
+  "exemplars": [{ "article": "", "improved_title": "", "intro": "", "tldr": ["", "", ""] }],
+  "per_article": [{ "id": "", "title": "", "cs_overall": 0, "llm_overall": 0 }]
+}
+
+Subdomain: ${subdomain}
+Articles to analyze (JSON):
+${JSON.stringify(articlesForPrompt)}`;
+}
+
+async function runKnowledgeAssessment(inputUrl, project) {
+  const subdomain = parseZendeskSubdomain(inputUrl);
+  if (!subdomain) {
+    throw new Error("Enter a valid Help Center URL (for example https://acme.zendesk.com/hc/en-us).");
+  }
+
+  const rawArticles = await fetchHelpCenterArticles(subdomain);
+  if (!rawArticles.length) {
+    throw new Error(`No public articles were found for "${subdomain}.zendesk.com". Check the URL or that the Help Center is public.`);
+  }
+
+  const { sections, categories } = await fetchHelpCenterTaxonomy(subdomain);
+  for (const article of rawArticles) {
+    const section = article.section_id ? sections.get(article.section_id) : null;
+    article.section_name = section?.name || null;
+    const categoryId = section?.category_id;
+    article.category_name = categoryId ? categories.get(categoryId) || null : null;
+    const text = htmlToText(article.body);
+    article.word_count = countWords(text);
+    article.text_excerpt = text.slice(0, KB_ARTICLE_EXCERPT_CHARS);
+  }
+
+  const labelHealth = computeLabelHealth(rawArticles);
+
+  const sampled = [...rawArticles]
+    .sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0))
+    .slice(0, KB_MAX_ARTICLES_ANALYZED);
+
+  const prompt = buildAuditPrompt(subdomain, sampled, project);
+  const analysis = await geminiGenerateJSON(prompt);
+
+  const perArticleById = new Map();
+  for (const row of analysis.per_article || []) {
+    perArticleById.set(String(row.id), row);
+  }
+  const appendix = sampled.map((article) => {
+    const scored = perArticleById.get(String(article.id)) || {};
+    return {
+      id: article.id,
+      title: article.title,
+      labels_count: (article.label_names || []).length,
+      cs_overall: scored.cs_overall != null ? clampScore(scored.cs_overall) : null,
+      llm_overall: scored.llm_overall != null ? clampScore(scored.llm_overall) : null,
+      updated_at: article.updated_at,
+      html_url: article.html_url
+    };
+  });
+
+  const csSnapshot = analysis.quality_snapshot?.customer_service || {};
+  const llmSnapshot = analysis.quality_snapshot?.llm_readability || {};
+  const csOverall = weightedCustomerService(csSnapshot);
+  const llmOverall = averageScore(Object.values(llmSnapshot));
+
+  return {
+    subdomain,
+    runId: crypto.randomUUID(),
+    runAt: new Date().toISOString(),
+    model: GEMINI_MODEL,
+    totalSeen: rawArticles.length,
+    totalAnalyzed: sampled.length,
+    labelHealth,
+    csOverall,
+    llmOverall,
+    csSnapshot,
+    llmSnapshot,
+    systemicGaps: analysis.systemic_gaps || [],
+    topActions: analysis.top_actions || [],
+    labelTaxonomy: analysis.label_taxonomy || {},
+    exemplars: analysis.exemplars || [],
+    appendix
+  };
+}
+
+function scoreBar(value) {
+  const score = clampScore(value);
+  const pct = Math.round((score / 5) * 100);
+  const tone = score >= 4 ? "" : score >= 2.5 ? "mid" : "low";
+  return `<div class="kb-bar ${tone}"><span style="width:${pct}%"></span></div>`;
+}
+
+function renderScoreRows(labelMap, scores) {
+  return Object.entries(labelMap)
+    .map(([key, label]) => {
+      const value = clampScore(scores?.[key]);
+      return `
+        <div class="kb-score-row">
+          <span class="kb-score-label">${escapeHtml(label)}</span>
+          <span class="kb-score-val">
+            ${scoreBar(value)}
+            <span class="kb-score-num">${value.toFixed(1)}</span>
+          </span>
+        </div>`;
+    })
+    .join("");
+}
+
+function formatIsoDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return escapeHtml(String(value));
+  return date.toISOString().slice(0, 10);
+}
+
+function badgeClass(level) {
+  const value = String(level || "").toLowerCase();
+  if (value.startsWith("h")) return "high";
+  if (value.startsWith("m")) return "med";
+  return "low";
+}
+
+function renderAssessmentResult(result) {
+  const CS_LABELS = {
+    clarity: "Clarity",
+    actionability: "Actionability",
+    accuracy: "Accuracy / Completeness",
+    troubleshooting: "Troubleshooting",
+    empathy: "Empathy & Tone",
+    findability: "Findability",
+    accessibility: "Accessibility"
+  };
+  const LLM_LABELS = {
+    headings: "Heading Hierarchy",
+    chunkability: "Chunkability",
+    procedures: "Procedure Semantics",
+    inline_semantics: "Inline Semantics",
+    terminology: "Terminology",
+    links_text: "Link / Text Semantics",
+    metadata: "Metadata",
+    structured_data: "Structured Data",
+    i18n: "i18n Readiness"
+  };
+
+  const topLabels = result.labelHealth.top.length
+    ? result.labelHealth.top.map((item) => `${escapeHtml(item.label)} (${item.count})`).join(", ")
+    : "None found";
+
+  const gapsMarkup = result.systemicGaps.length
+    ? `<ul>${result.systemicGaps.map((gap) => `<li>${escapeHtml(gap)}</li>`).join("")}</ul>`
+    : `<p class="hint">No systemic gaps reported.</p>`;
+
+  const actionsMarkup = result.topActions.length
+    ? result.topActions
+        .map(
+          (action) => `
+          <div class="kb-action">
+            <div class="kb-action-title">${escapeHtml(action.action || "")}
+              <span class="kb-badge ${badgeClass(action.impact)}">Impact: ${escapeHtml(action.impact || "?")}</span>
+              <span class="kb-badge low">Effort: ${escapeHtml(action.effort || "?")}</span>
+            </div>
+            ${action.why ? `<p class="hint">${escapeHtml(action.why)}</p>` : ""}
+          </div>`
+        )
+        .join("")
+    : `<p class="hint">No actions reported.</p>`;
+
+  const taxonomy = result.labelTaxonomy || {};
+  const canonicalMarkup = (taxonomy.canonical || []).length
+    ? (taxonomy.canonical || []).map((label) => `<span class="kb-tag">${escapeHtml(label)}</span>`).join("")
+    : `<span class="hint">No canonical set suggested.</span>`;
+  const synonymMarkup = (taxonomy.synonyms_to_merge || []).length
+    ? `<ul>${(taxonomy.synonyms_to_merge || [])
+        .map((item) => `<li><strong>${escapeHtml(item.canonical || "")}</strong>: ${escapeHtml((item.synonyms || []).join(", "))}</li>`)
+        .join("")}</ul>`
+    : "";
+  const retireMarkup = (taxonomy.retire || []).length
+    ? `<p><strong>Low-signal labels to retire:</strong> ${(taxonomy.retire || [])
+        .map((label) => `<span class="kb-tag retire">${escapeHtml(label)}</span>`)
+        .join("")}</p>`
+    : "";
+  const namespaceMarkup = (taxonomy.namespacing || []).length
+    ? `<p class="hint">Optional namespacing: ${(taxonomy.namespacing || []).map((ns) => escapeHtml(ns)).join(", ")}</p>`
+    : "";
+
+  const exemplarsMarkup = result.exemplars.length
+    ? result.exemplars
+        .map(
+          (example) => `
+          <div class="kb-exemplar">
+            <h4>${escapeHtml(example.article || "Example")}</h4>
+            ${example.improved_title ? `<p><strong>Improved title:</strong> ${escapeHtml(example.improved_title)}</p>` : ""}
+            ${example.intro ? `<p><strong>One-line intro:</strong> ${escapeHtml(example.intro)}</p>` : ""}
+            ${(example.tldr || []).length ? `<p><strong>TL;DR:</strong></p><ul>${(example.tldr || []).map((bullet) => `<li>${escapeHtml(bullet)}</li>`).join("")}</ul>` : ""}
+          </div>`
+        )
+        .join("")
+    : `<p class="hint">No exemplars generated.</p>`;
+
+  const appendixRows = result.appendix
+    .map(
+      (row) => `
+      <tr>
+        <td>${escapeHtml(String(row.id))}</td>
+        <td>${row.html_url ? `<a href="${escapeHtml(row.html_url)}" target="_blank" rel="noopener">${escapeHtml(row.title || "(untitled)")}</a>` : escapeHtml(row.title || "(untitled)")}</td>
+        <td>${row.labels_count}</td>
+        <td>${row.cs_overall != null ? row.cs_overall.toFixed(1) : "—"}</td>
+        <td>${row.llm_overall != null ? row.llm_overall.toFixed(1) : "—"}</td>
+        <td>${formatIsoDate(row.updated_at)}</td>
+      </tr>`
+    )
+    .join("");
+
+  return `
+    <section class="card">
+      <h2>Help Center Audit — Executive Summary</h2>
+      <p class="kb-meta-line">
+        Subdomain: <code>${escapeHtml(result.subdomain)}</code> &bull;
+        Date: ${escapeHtml(formatIsoDate(result.runAt))} &bull;
+        Run ID: <code>${escapeHtml(result.runId)}</code> &bull;
+        Model: ${escapeHtml(result.model)}
+      </p>
+      <div class="kb-metrics">
+        <div class="kb-metric"><div class="num">${result.csOverall.toFixed(1)}<small>/5</small></div><div class="lbl">Customer Service (weighted)</div></div>
+        <div class="kb-metric"><div class="num">${result.llmOverall.toFixed(1)}<small>/5</small></div><div class="lbl">LLM Readability</div></div>
+        <div class="kb-metric"><div class="num">${result.totalAnalyzed}<small>/${result.totalSeen}</small></div><div class="lbl">Coverage (analyzed/seen)</div></div>
+        <div class="kb-metric"><div class="num">${result.labelHealth.zeroLabelPct}<small>%</small></div><div class="lbl">Articles with 0 labels</div></div>
+      </div>
+      <p class="hint">Quality scores are produced by ${escapeHtml(result.model)} over the ${result.totalAnalyzed} most recently updated articles. Label health and coverage are computed across all ${result.totalSeen} scanned articles.</p>
+    </section>
+
+    <div class="grid two">
+      <section class="card">
+        <h3>Customer Service Snapshot</h3>
+        <div class="kb-scores">${renderScoreRows(CS_LABELS, result.csSnapshot)}</div>
+      </section>
+      <section class="card">
+        <h3>LLM Readability Snapshot</h3>
+        <div class="kb-scores">${renderScoreRows(LLM_LABELS, result.llmSnapshot)}</div>
+      </section>
+    </div>
+
+    <div class="grid two">
+      <section class="card">
+        <h3>Label Health</h3>
+        <ul>
+          <li>Articles with 0 labels: <strong>${result.labelHealth.zeroLabel}</strong> (${result.labelHealth.zeroLabelPct}% of scanned)</li>
+          <li>Unique labels in use: <strong>${result.labelHealth.uniqueLabels}</strong></li>
+          <li>Top labels: ${escapeHtml(topLabels)}</li>
+        </ul>
+        <h3 style="margin-top:18px;">Biggest Systemic Gaps</h3>
+        ${gapsMarkup}
+      </section>
+      <section class="card">
+        <h3>Top Actions (Impact-first)</h3>
+        ${actionsMarkup}
+      </section>
+    </div>
+
+    <section class="card">
+      <h3>Label Taxonomy — Recommendations</h3>
+      <p><strong>Canonical set (draft):</strong></p>
+      <div>${canonicalMarkup}</div>
+      ${synonymMarkup ? `<p style="margin-top:12px;"><strong>Synonyms to merge:</strong></p>${synonymMarkup}` : ""}
+      ${retireMarkup}
+      ${namespaceMarkup}
+    </section>
+
+    <section class="card">
+      <h3>Exemplars (Before → After Micro-edits)</h3>
+      ${exemplarsMarkup}
+    </section>
+
+    <section class="card">
+      <h3>Appendix — Article Table</h3>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>Title</th><th>Labels (#)</th><th>CS Score</th><th>LLM Score</th><th>Updated</th></tr>
+        </thead>
+        <tbody>${appendixRows}</tbody>
+      </table>
+    </section>
+  `;
+}
+
+function renderKnowledgeAssessment(project, { url = "", result = null, error = "" } = {}) {
+  const placeholder = READINESS_PLACEHOLDERS[KNOWLEDGE_ASSESSMENT_SLUG];
+  const keyWarning = GEMINI_API_KEY
+    ? ""
+    : `<div class="flash info">Set <code>GEMINI_API_KEY</code> in your <code>.env</code> file to enable scoring. <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Get a key</a>.</div>`;
+  const errorMarkup = error ? `<div class="flash error">${escapeHtml(error)}</div>` : "";
+
+  return pageChrome(project._req, placeholder.title, `
+    <div class="breadcrumb"><a href="/">Flights</a> / <a href="/projects/${project.id}">${escapeHtml(project.project_name)}</a> / ${escapeHtml(placeholder.title)}</div>
+    ${keyWarning}
+    ${errorMarkup}
+    <section class="card">
+      <h1>${escapeHtml(placeholder.title)}</h1>
+      <p>Run an AI-readiness audit of a public Zendesk Help Center. Enter the Help Center URL and we will score article quality and LLM readability, review label health, and suggest the highest-impact fixes.</p>
+      <form method="post" action="/projects/${project.id}/readiness/${KNOWLEDGE_ASSESSMENT_SLUG}/run" onsubmit="kbRunning(this)">
+        <label for="knowledge_source_url">Knowledge Source URL</label>
+        <input id="knowledge_source_url" name="knowledge_source_url" type="text" inputmode="url"
+          placeholder="https://acme.zendesk.com/hc/en-us" value="${escapeHtml(url)}" required autocomplete="off">
+        <p class="hint">Paste a full Help Center URL — we will extract the subdomain automatically.</p>
+        <div class="actions">
+          <button type="submit" data-run-button>Run Assessment</button>
+          <span class="kb-running" data-run-status hidden>Running assessment… this can take up to a minute.</span>
+          <a class="button secondary" href="/projects/${project.id}">Back to Flight details</a>
+        </div>
+      </form>
+    </section>
+    ${result ? renderAssessmentResult(result) : ""}
+    <script>
+      function kbRunning(form) {
+        var button = form.querySelector('[data-run-button]');
+        var status = form.querySelector('[data-run-status]');
+        if (button) { button.disabled = true; button.textContent = 'Running…'; }
+        if (status) { status.hidden = false; }
+      }
+    </script>
+  `);
+}
+
 app.get("/projects/:id/readiness/:module", requireUser, async (req, res, next) => {
   try {
     const project = await getProject(req.params.id, req.user);
     if (!project) {
       res.status(404).send(pageChrome(req, "Flight not found", `<section class="card"><h1>Flight not found</h1></section>`));
+      return;
+    }
+
+    if (req.params.module === KNOWLEDGE_ASSESSMENT_SLUG) {
+      project._req = req;
+      res.send(renderKnowledgeAssessment(project, {}));
       return;
     }
 
@@ -1618,6 +2250,27 @@ app.get("/projects/:id/readiness/:module", requireUser, async (req, res, next) =
         </div>
       </section>
     `));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post(`/projects/:id/readiness/${KNOWLEDGE_ASSESSMENT_SLUG}/run`, requireUser, async (req, res, next) => {
+  try {
+    const project = await getProject(req.params.id, req.user);
+    if (!project) {
+      res.status(404).send(pageChrome(req, "Flight not found", `<section class="card"><h1>Flight not found</h1></section>`));
+      return;
+    }
+
+    project._req = req;
+    const url = (req.body.knowledge_source_url || "").trim();
+    try {
+      const result = await runKnowledgeAssessment(url, project);
+      res.send(renderKnowledgeAssessment(project, { url, result }));
+    } catch (assessmentError) {
+      res.send(renderKnowledgeAssessment(project, { url, error: assessmentError.message }));
+    }
   } catch (error) {
     next(error);
   }
