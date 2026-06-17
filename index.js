@@ -1489,7 +1489,7 @@ function renderMissionControl(project) {
       ]
     },
     {
-      title: "Flight Crew Configuration",
+      title: "Agent Copilot",
       open: false,
       options: [
         { label: "Task 1", href: readinessHref(project, "copilot-task-1"), done: false },
@@ -1554,8 +1554,8 @@ const READINESS_PLACEHOLDERS = {
   "build-simple-procedure": { title: "Build a Simple Procedure", description: "Placeholder for building a simple procedure." },
   "connect-external-content": { title: "Connect External Content", description: "Placeholder for connecting external content." },
   "build-advanced-procedure-api": { title: "Build an Advanced Procedure using API calls", description: "Placeholder for building an advanced procedure using API calls." },
-  "copilot-task-1": { title: "Flight Crew Configuration - Task 1", description: "Placeholder for Flight Crew task 1." },
-  "copilot-task-2": { title: "Flight Crew Configuration - Task 2", description: "Placeholder for Flight Crew task 2." }
+  "copilot-task-1": { title: "Agent Copilot - Task 1", description: "Placeholder for Agent Copilot task 1." },
+  "copilot-task-2": { title: "Agent Copilot - Task 2", description: "Placeholder for Agent Copilot task 2." }
 };
 
 function redirectBack(req, res) {
