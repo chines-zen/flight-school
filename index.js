@@ -1386,7 +1386,7 @@ function renderMissionControl(project) {
       title: "AI Readiness",
       open: true,
       options: [
-        { label: "Knowledge Assessment", href: readinessHref(project, "ai-readiness-knowledge-assessment") }
+        { label: "Knowledge Assessment", href: readinessHref(project, "help-center-readiness") }
       ]
     },
     {
@@ -1458,7 +1458,7 @@ function renderChecklistItem(label, done) {
 const READINESS_PLACEHOLDERS = {
   "basic-option-1": { title: "Basic Bot Configuration - Help Center Connection", description: "Placeholder for the Help Center Connection configuration path." },
   "basic-option-2": { title: "Basic Bot Configuration - Procedures", description: "Placeholder for the Procedures configuration path." },
-  "ai-readiness-knowledge-assessment": { title: "AI Readiness - Knowledge Assessment", description: "Placeholder for the Knowledge Assessment configuration path." },
+  "help-center-readiness": { title: "AI Readiness - Knowledge Assessment", description: "Placeholder for the Knowledge Assessment configuration path." },
   "advanced-option-1": { title: "Advanced Bot Configuration - Option 1", description: "Placeholder for an additional Advanced Bot configuration path." },
   "advanced-option-2": { title: "Advanced Bot Configuration - Option 2", description: "Placeholder for an additional Advanced Bot configuration path." },
   "copilot-option-1": { title: "Copilot Configuration - Option 1", description: "Placeholder for the first Copilot configuration path." },
@@ -1689,12 +1689,16 @@ app.get("/projects/:id", requireUser, async (req, res, next) => {
   }
 });
 
-const KNOWLEDGE_ASSESSMENT_SLUG = "ai-readiness-knowledge-assessment";
+const KNOWLEDGE_ASSESSMENT_SLUG = "help-center-readiness";
 
-function parseZendeskSubdomain(input) {
+function parseZendeskSource(input) {
   const raw = String(input || "").trim();
   if (!raw) return null;
-  if (/^[a-z0-9][a-z0-9-]*$/i.test(raw)) return raw.toLowerCase();
+  // Bare subdomain (e.g. "acme") -> default Zendesk host.
+  if (/^[a-z0-9][a-z0-9-]*$/i.test(raw)) {
+    const sub = raw.toLowerCase();
+    return { apiBase: `https://${sub}.zendesk.com`, label: sub };
+  }
   let host;
   try {
     const url = new URL(raw.includes("://") ? raw : `https://${raw}`);
@@ -1702,15 +1706,18 @@ function parseZendeskSubdomain(input) {
   } catch {
     return null;
   }
-  if (!host) return null;
+  if (!host || !host.includes(".")) return null;
   const zendeskMatch = host.match(/^([a-z0-9-]+)\.zendesk\.com$/i);
-  if (zendeskMatch) return zendeskMatch[1].toLowerCase();
-  const firstLabel = host.split(".")[0];
-  return firstLabel ? firstLabel.toLowerCase() : null;
+  if (zendeskMatch) {
+    return { apiBase: `https://${host}`, label: zendeskMatch[1].toLowerCase() };
+  }
+  // Host-mapped custom domain (e.g. help.melio.com): the Help Center API is
+  // served on the custom domain itself, so query it directly.
+  return { apiBase: `https://${host}`, label: host.toLowerCase() };
 }
 
-async function zendeskGet(subdomain, path) {
-  const url = `https://${subdomain}.zendesk.com${path}`;
+async function zendeskGet(apiBase, path) {
+  const url = `${apiBase}${path}`;
   const response = await fetch(url, { headers: { Accept: "application/json" } });
   const text = await response.text();
   let data = {};
@@ -1736,12 +1743,12 @@ function nextPagePath(nextPage) {
   }
 }
 
-async function fetchHelpCenterArticles(subdomain) {
+async function fetchHelpCenterArticles(apiBase) {
   const byId = new Map();
   let path = "/api/v2/help_center/articles.json?per_page=100";
   let pages = 0;
   while (path && byId.size < KB_MAX_ARTICLES_SCANNED && pages < 25) {
-    const data = await zendeskGet(subdomain, path);
+    const data = await zendeskGet(apiBase, path);
     for (const article of data.articles || []) {
       if (article.draft) continue;
       const existing = byId.get(article.id);
@@ -1754,17 +1761,17 @@ async function fetchHelpCenterArticles(subdomain) {
   return [...byId.values()];
 }
 
-async function fetchHelpCenterTaxonomy(subdomain) {
+async function fetchHelpCenterTaxonomy(apiBase) {
   const sections = new Map();
   const categories = new Map();
   try {
-    const data = await zendeskGet(subdomain, "/api/v2/help_center/sections.json?per_page=100");
+    const data = await zendeskGet(apiBase, "/api/v2/help_center/sections.json?per_page=100");
     for (const section of data.sections || []) sections.set(section.id, { name: section.name, category_id: section.category_id });
   } catch {
     /* taxonomy is best-effort */
   }
   try {
-    const data = await zendeskGet(subdomain, "/api/v2/help_center/categories.json?per_page=100");
+    const data = await zendeskGet(apiBase, "/api/v2/help_center/categories.json?per_page=100");
     for (const category of data.categories || []) categories.set(category.id, category.name);
   } catch {
     /* taxonomy is best-effort */
@@ -2069,17 +2076,23 @@ ${JSON.stringify(articlesForPrompt)}`;
 }
 
 async function runKnowledgeAssessment(inputUrl, project) {
-  const subdomain = parseZendeskSubdomain(inputUrl);
-  if (!subdomain) {
+  const source = parseZendeskSource(inputUrl);
+  if (!source) {
     throw new Error("Enter a valid Help Center URL (for example https://acme.zendesk.com/hc/en-us).");
   }
 
-  const rawArticles = await fetchHelpCenterArticles(subdomain);
+  const rawArticles = await fetchHelpCenterArticles(source.apiBase);
   if (!rawArticles.length) {
-    throw new Error(`No public articles were found for "${subdomain}.zendesk.com". Check the URL or that the Help Center is public.`);
+    throw new Error(`No public articles were found at "${source.label}". Check the URL or that the Help Center is public.`);
   }
 
-  const { sections, categories } = await fetchHelpCenterTaxonomy(subdomain);
+  // Resolve the real Zendesk subdomain from an article URL (handles host-mapped custom domains).
+  let subdomain = source.label;
+  const sampleApiUrl = rawArticles.find((article) => article.url)?.url;
+  const subdomainMatch = String(sampleApiUrl || "").match(/https?:\/\/([a-z0-9-]+)\.zendesk\.com/i);
+  if (subdomainMatch) subdomain = subdomainMatch[1].toLowerCase();
+
+  const { sections, categories } = await fetchHelpCenterTaxonomy(source.apiBase);
   for (const article of rawArticles) {
     const section = article.section_id ? sections.get(article.section_id) : null;
     article.section_name = section?.name || null;
