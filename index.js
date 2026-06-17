@@ -13,8 +13,6 @@ const APP_SECRET = process.env.APP_SECRET || "local-development-secret-change-be
 const AIRTABLE_META_BASE_URL = "https://api.airtable.com/v0/meta";
 const AIRTABLE_DATA_BASE_URL = "https://api.airtable.com/v0";
 
-const LLM_PROVIDER = (process.env.LLM_PROVIDER || "gemini").toLowerCase();
-
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
 const GEMINI_API_BASE = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta";
@@ -23,15 +21,20 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 const OPENAI_BASE_URL = (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
 
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY || "";
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-3-5-sonnet-latest";
 const ANTHROPIC_BASE_URL = (process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com/v1").replace(/\/$/, "");
 const ANTHROPIC_VERSION = process.env.ANTHROPIC_VERSION || "2023-06-01";
 
-const BEDROCK_BASE_URL = (process.env.AWS_ENDPOINT_URL_BEDROCK_RUNTIME || process.env.BEDROCK_BASE_URL || "").replace(/\/$/, "");
-const BEDROCK_BEARER_TOKEN = process.env.AWS_BEARER_TOKEN_BEDROCK || process.env.BEDROCK_API_KEY || "";
+const BEDROCK_BASE_URL = (process.env.AWS_ENDPOINT_URL_BEDROCK_RUNTIME || process.env.BEDROCK_BASE_URL || "https://ai-gateway.zende.sk/bedrock").replace(/\/$/, "");
+const BEDROCK_BEARER_TOKEN = process.env.AWS_BEARER_TOKEN_BEDROCK || process.env.BEDROCK_API_KEY || process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY || "";
 const BEDROCK_MODEL = process.env.BEDROCK_MODEL || "us.anthropic.claude-sonnet-4-6";
 const BEDROCK_ANTHROPIC_VERSION = process.env.BEDROCK_ANTHROPIC_VERSION || "bedrock-2023-05-31";
+
+const LLM_PROVIDER = (
+  process.env.LLM_PROVIDER ||
+  (BEDROCK_BEARER_TOKEN ? "bedrock" : "gemini")
+).toLowerCase();
 
 const LLM_MAX_TOKENS = Number(process.env.LLM_MAX_TOKENS || 8192);
 
@@ -2117,7 +2120,7 @@ function llmConfigStatus() {
       keyUrl: "https://platform.openai.com/api-keys"
     };
   }
-  if (LLM_PROVIDER === "anthropic" || LLM_PROVIDER === "claude") {
+  if (LLM_PROVIDER === "anthropic") {
     return {
       provider: "anthropic",
       ready: Boolean(ANTHROPIC_API_KEY),
@@ -2132,6 +2135,15 @@ function llmConfigStatus() {
       ready: Boolean(BEDROCK_BEARER_TOKEN && BEDROCK_BASE_URL),
       model: `Bedrock ${BEDROCK_MODEL}`,
       envVar: BEDROCK_BASE_URL ? "AWS_BEARER_TOKEN_BEDROCK" : "AWS_ENDPOINT_URL_BEDROCK_RUNTIME / AWS_BEARER_TOKEN_BEDROCK",
+      keyUrl: "https://ai-gateway.zende.sk"
+    };
+  }
+  if (LLM_PROVIDER === "claude") {
+    return {
+      provider: "bedrock",
+      ready: Boolean(BEDROCK_BEARER_TOKEN && BEDROCK_BASE_URL),
+      model: `Bedrock ${BEDROCK_MODEL}`,
+      envVar: BEDROCK_BEARER_TOKEN ? "AWS_ENDPOINT_URL_BEDROCK_RUNTIME" : "AWS_BEARER_TOKEN_BEDROCK",
       keyUrl: "https://ai-gateway.zende.sk"
     };
   }
