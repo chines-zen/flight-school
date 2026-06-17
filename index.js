@@ -143,9 +143,24 @@ async function migrate() {
       project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       email TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'Flight Crew',
+      access_enabled BOOLEAN NOT NULL DEFAULT false,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       UNIQUE(project_id, email)
     );
+
+    ALTER TABLE project_authorized_users
+      ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'Flight Crew';
+
+    ALTER TABLE project_authorized_users
+      ADD COLUMN IF NOT EXISTS access_enabled BOOLEAN NOT NULL DEFAULT false;
+
+    ALTER TABLE project_authorized_users
+      ALTER COLUMN role SET DEFAULT 'Flight Crew';
+
+    UPDATE project_authorized_users
+      SET role = 'Flight Crew'
+      WHERE role = 'Co-Pilot';
 
     CREATE TABLE IF NOT EXISTS project_airtable_config (
       project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
@@ -175,6 +190,10 @@ function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
 }
 
+function displayCrewRole(role) {
+  return role === "Co-Pilot" ? "Flight Crew" : (role || "Flight Crew");
+}
+
 function parsePomeriumEmail(req) {
   const raw = req.get("X-Pomerium-Claim-Email");
   if (!raw) return null;
@@ -197,8 +216,8 @@ function readIdentity(req) {
 }
 
 function requireUser(req, res, next) {
-  const email = readIdentity(req);
-  if (!email) {
+  const actualEmail = readIdentity(req);
+  if (!actualEmail) {
     res.status(401).send(layout("Sign in required", `
       <section class="card narrow">
         <h1>Sign in required</h1>
@@ -209,9 +228,16 @@ function requireUser(req, res, next) {
     return;
   }
 
+  const actualIsAdmin = actualEmail === ADMIN_EMAIL;
+  const sessionViewAsEmail = actualIsAdmin ? normalizeEmail(req.session.viewAsEmail) : "";
+  const isViewingAs = Boolean(sessionViewAsEmail);
+  const email = isViewingAs ? sessionViewAsEmail : actualEmail;
+
   req.user = {
+    actualEmail,
     email,
-    isAdmin: email === ADMIN_EMAIL,
+    isAdmin: actualIsAdmin,
+    isViewingAs,
     isZendesk: email.endsWith("@zendesk.com")
   };
   next();
@@ -230,14 +256,39 @@ function takeFlash(req) {
 function pageChrome(req, title, body) {
   const flash = takeFlash(req);
   const flashMarkup = flash ? `<div class="flash ${escapeHtml(flash.type)}">${escapeHtml(flash.message)}</div>` : "";
+  const viewAsMarkup = req.user.isAdmin ? `
+    <span>${escapeHtml(req.user.actualEmail)}</span>
+    <span class="pill">App Admin</span>
+    <button type="button" class="text-link" onclick="document.getElementById('view-as-modal').hidden = false">View As</button>
+    ${req.user.isViewingAs ? `
+      <span class="pill">Viewing as ${escapeHtml(req.user.email)}</span>
+      <form method="post" action="/admin/view-as/exit">
+        <button type="submit" class="secondary">Exit</button>
+      </form>
+    ` : ""}
+    <div id="view-as-modal" class="modal-backdrop" hidden>
+      <div class="modal">
+        <div class="view-as-title">View As</div>
+        <p class="hint">Enter an email to interact with the app as that user.</p>
+        <form method="post" action="/admin/view-as">
+          <label for="view_as_email">Email</label>
+          <input id="view_as_email" name="email" type="email" value="${req.user.isViewingAs ? escapeHtml(req.user.email) : ""}" required>
+          <div class="actions">
+            <button type="submit">View As</button>
+            <button type="button" class="secondary" onclick="document.getElementById('view-as-modal').hidden = true">Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  ` : `<span>${escapeHtml(req.user.email)}</span>`;
+
   return layout(title, `
     <header class="topbar">
       <div class="header-left">
         <a class="brand" href="/">Zendesk Flight School</a>
       </div>
       <nav>
-        <span>${escapeHtml(req.user.email)}</span>
-        ${req.user.isAdmin ? '<span class="pill">App Admin</span>' : ""}
+        ${viewAsMarkup}
       </nav>
     </header>
     <main class="container">
@@ -304,6 +355,18 @@ function layout(title, body) {
           display: flex;
           gap: 12px;
         }
+        .topbar nav form {
+          margin: 0;
+        }
+        .text-link {
+          background: none;
+          border: 0;
+          color: var(--zd-green);
+          font-size: 14px;
+          font-weight: 400;
+          padding: 0;
+          text-decoration: underline;
+        }
         .container {
           margin: 0 auto;
           max-width: 1180px;
@@ -354,6 +417,9 @@ function layout(title, body) {
         .schedule-badge.scheduled { background: #edf7ff; color: #1f73b7; }
         .schedule-badge.live { background: #edf8f4; color: var(--zd-success); }
         .schedule-badge.completed { background: #eef0f2; color: var(--zd-subtle); }
+        .hero-title .schedule-badge {
+          transform: translateY(-3px);
+        }
         .status-badge {
           background: #eef0f2;
           border-radius: 999px;
@@ -394,6 +460,9 @@ function layout(title, body) {
           gap: 24px;
           grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
         }
+        .mission-control-card {
+          width: 100%;
+        }
         .mission-group {
           border: 1px solid var(--zd-border);
           border-radius: 10px;
@@ -401,8 +470,11 @@ function layout(title, body) {
           overflow: hidden;
         }
         .mission-group summary {
+          align-items: center;
           cursor: pointer;
+          display: flex;
           font-weight: 750;
+          justify-content: space-between;
           list-style: none;
           padding: 14px 16px;
         }
@@ -416,6 +488,14 @@ function layout(title, body) {
           gap: 10px;
           padding: 14px;
         }
+        .mission-count {
+          color: var(--zd-subtle);
+          font-size: 12px;
+          font-weight: 700;
+        }
+        .mission-group[open] .mission-count {
+          color: white;
+        }
         .mission-option {
           align-items: center;
           border: 1px solid var(--zd-border);
@@ -424,10 +504,26 @@ function layout(title, body) {
           display: flex;
           justify-content: space-between;
           padding: 12px 14px;
-          text-decoration: none;
         }
         .mission-option:hover {
           background: #f3f5f5;
+        }
+        .mission-task-title {
+          align-items: center;
+          display: flex;
+          gap: 10px;
+        }
+        .mission-task-title input {
+          accent-color: #1f73b7;
+          width: auto;
+        }
+        .mission-open-link {
+          color: var(--zd-green);
+          font-weight: 650;
+          text-decoration: none;
+        }
+        .mission-open-link:hover {
+          text-decoration: underline;
         }
         .checklist {
           list-style: none;
@@ -472,6 +568,9 @@ function layout(title, body) {
           font: inherit;
           padding: 10px 12px;
           width: 100%;
+        }
+        input::placeholder, textarea::placeholder {
+          font-style: italic;
         }
         textarea { min-height: 100px; resize: vertical; }
         .hint { color: var(--zd-subtle); font-size: 13px; margin-top: 4px; }
@@ -645,6 +744,7 @@ function layout(title, body) {
           padding-left: 0;
         }
         .criteria-table input[type="checkbox"] {
+          accent-color: #1f73b7;
           width: auto;
         }
         .criteria-row {
@@ -658,6 +758,38 @@ function layout(title, body) {
           border-color: var(--zd-border);
           color: var(--zd-green);
           padding: 6px 9px;
+        }
+        .trash-button {
+          background: white;
+          border-color: var(--zd-border);
+          color: var(--zd-danger);
+          padding: 6px 9px;
+        }
+        .modal-backdrop {
+          align-items: center;
+          background: rgba(47, 57, 65, 0.45);
+          display: flex;
+          inset: 0;
+          justify-content: center;
+          padding: 24px;
+          position: fixed;
+          z-index: 20;
+        }
+        .modal-backdrop[hidden] {
+          display: none;
+        }
+        .modal {
+          background: white;
+          border-radius: 12px;
+          max-width: 620px;
+          padding: 24px;
+          width: 100%;
+        }
+        .view-as-title {
+          color: var(--zd-text);
+          font-size: 14px;
+          font-weight: 400;
+          margin-bottom: 8px;
         }
         .criteria-actions {
           display: flex;
@@ -692,6 +824,7 @@ function layout(title, body) {
           .container { padding: 16px; }
           .detail-hero h1, .hero-title { margin-right: 0; }
           .hero-title { align-items: flex-start; flex-direction: column; gap: 6px; }
+          .hero-title .schedule-badge { transform: none; }
           .detail-hero .edit-toggle { position: static; margin-bottom: 12px; }
         }
       </style>
@@ -951,7 +1084,8 @@ async function listVisibleProjects(user, options = {}) {
   const sortColumn = allowedSorts[options.sort] || "p.updated_at";
   const sortDir = options.dir === "asc" ? "ASC" : "DESC";
 
-  const result = user.isAdmin
+  const hasAdminBypass = user.isAdmin && !user.isViewingAs;
+  const result = hasAdminBypass
     ? await pool.query(
       `SELECT p.*
        FROM projects p
@@ -970,7 +1104,7 @@ async function listVisibleProjects(user, options = {}) {
        FROM projects p
        WHERE (lower(p.owner_email) = lower($1) OR EXISTS (
           SELECT 1 FROM project_authorized_users pau
-          WHERE pau.project_id = p.id AND lower(pau.email) = lower($1)
+          WHERE pau.project_id = p.id AND lower(pau.email) = lower($1) AND pau.access_enabled = true
         ))
         AND (
           lower(p.project_name) LIKE $2 OR
@@ -990,7 +1124,7 @@ async function getProject(projectId, user) {
     `SELECT p.*,
       EXISTS (
         SELECT 1 FROM project_authorized_users pau
-        WHERE pau.project_id = p.id AND lower(pau.email) = lower($2)
+        WHERE pau.project_id = p.id AND lower(pau.email) = lower($2) AND pau.access_enabled = true
       ) AS is_authorized_user
      FROM projects p
      WHERE p.id = $1`,
@@ -999,16 +1133,17 @@ async function getProject(projectId, user) {
   const project = result.rows[0];
   if (!project) return null;
 
-  const canAccess = user.isAdmin || normalizeEmail(project.owner_email) === user.email || project.is_authorized_user;
+  const hasAdminBypass = user.isAdmin && !user.isViewingAs;
+  const canAccess = hasAdminBypass || normalizeEmail(project.owner_email) === user.email || project.is_authorized_user;
   return canAccess ? project : null;
 }
 
 function canManageProject(project, user) {
-  return user.isAdmin || normalizeEmail(project.owner_email) === user.email;
+  return (user.isAdmin && !user.isViewingAs) || normalizeEmail(project.owner_email) === user.email;
 }
 
 function canAccessModule2(project, user) {
-  if (user.isAdmin || normalizeEmail(project.owner_email) === user.email) return true;
+  if ((user.isAdmin && !user.isViewingAs) || normalizeEmail(project.owner_email) === user.email) return true;
   return project.is_authorized_user && project.module2_auth_users_enabled;
 }
 
@@ -1105,6 +1240,10 @@ function renderScheduleBadge(project) {
   return `<span class="schedule-badge ${status.className}">${escapeHtml(status.label)}</span>`;
 }
 
+function formatFlightTableEndDate(project) {
+  return flightScheduleStatus(project).className === "completed" ? "Completed" : formatDayMonth(project.end_date);
+}
+
 function flightStatus(project) {
   if (project.module2_bot_confirmed) return { label: "ready", className: "ready" };
   if (project.airtable_table_name || project.airtable_key_column) return { label: "active", className: "active" };
@@ -1141,6 +1280,21 @@ function renderFlightHero(project, user) {
         <div><dt>End date</dt><dd>${escapeHtml(formatEndDateWithRemaining(project.end_date) || "Not provided")}</dd></div>
       </dl>
       ${canManageProject(project, user) ? renderFlightEditForm(project) : ""}
+    </section>
+  `;
+}
+
+function renderCopilotFlightPlaceholder(project) {
+  return `
+    <div class="breadcrumb"><a href="/">Flights</a> / ${escapeHtml(project.project_name)}</div>
+    <section class="card">
+      <h1>Flight Crew View Placeholder</h1>
+      <p>This is the placeholder flight detail page for non-Zendesk Flight Crew.</p>
+      <dl class="grid three detail-list">
+        <div><dt>Flight</dt><dd>${escapeHtml(project.project_name)}</dd></div>
+        <div><dt>Account</dt><dd>${escapeHtml(project.client)}</dd></div>
+        <div><dt>End date</dt><dd>${escapeHtml(formatEndDateWithRemaining(project.end_date) || "Not provided")}</dd></div>
+      </dl>
     </section>
   `;
 }
@@ -1213,7 +1367,7 @@ function renderSuccessCriteriaRow(criterion, index, canManage, editing) {
 function renderSuccessCriteriaSection(project, canManage) {
   const criteria = normalizeSuccessCriteria(project.success_criteria);
   return `
-    <details class="card" id="success-criteria-panel">
+    <details class="card" id="success-criteria-panel" open>
       <summary class="criteria-heading"><h2>Success Criteria</h2><span class="criteria-caret">&rsaquo;</span></summary>
       <form method="post" action="/projects/${project.id}/success-criteria" onsubmit="enableCriteriaFields(this)">
         <table class="criteria-table">
@@ -1293,67 +1447,99 @@ function readinessHref(project, slug) {
   return `/projects/${project.id}/readiness/${encodeURIComponent(slug)}`;
 }
 
+function airtableConfigHref(project, moduleSlug = "build-api-connection") {
+  return `/projects/${project.id}/readiness/${encodeURIComponent(moduleSlug)}/airtable-config`;
+}
+
+function aiAgentConfigHref(project, moduleSlug = "build-api-connection") {
+  return `/projects/${project.id}/readiness/${encodeURIComponent(moduleSlug)}/ai-agent-config`;
+}
+
+function moduleTitle(slug) {
+  return READINESS_PLACEHOLDERS[slug]?.title || slug.split("-").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
+}
+
+function renderBreadcrumb(project, items = []) {
+  return `
+    <div class="breadcrumb">
+      <a href="/">Flights</a> / <a href="/projects/${project.id}">${escapeHtml(project.project_name)}</a>
+      ${items.map((item) => ` / ${item.href ? `<a href="${escapeHtml(item.href)}">${escapeHtml(item.label)}</a>` : escapeHtml(item.label)}`).join("")}
+    </div>
+  `;
+}
+
 function renderMissionControl(project) {
   const groups = [
     {
       title: "Basic Bot Configuration",
       open: true,
       options: [
-        { label: "Option 1", href: readinessHref(project, "basic-option-1") },
-        { label: "Option 2", href: readinessHref(project, "basic-option-2") }
+        { label: "Help Center Readiness Check", href: readinessHref(project, "help-center-readiness"), done: false },
+        { label: "Connect Zendesk Help Center", href: readinessHref(project, "connect-zendesk-help-center"), done: false },
+        { label: "Build a Simple Procedure", href: readinessHref(project, "build-simple-procedure"), done: false }
       ]
     },
     {
       title: "Advanced Bot Configuration",
       open: false,
       options: [
-        { label: "Option 1", href: readinessHref(project, "advanced-option-1") },
-        { label: "Airtable API + Zendesk AI Agent setup", href: `/projects/${project.id}/module1` },
-        { label: "Option 2", href: readinessHref(project, "advanced-option-2") }
+        { label: "Build an API Connection", href: airtableConfigHref(project), done: Boolean(project.airtable_table_name && project.airtable_key_column) },
+        { label: "Connect External Content", href: readinessHref(project, "connect-external-content"), done: false },
+        { label: "Build an Advanced Procedure using API calls", href: readinessHref(project, "build-advanced-procedure-api"), done: false }
       ]
     },
     {
-      title: "Copilot Configuration",
+      title: "Flight Crew Configuration",
       open: false,
       options: [
-        { label: "Option 1", href: readinessHref(project, "copilot-option-1") },
-        { label: "Option 2", href: readinessHref(project, "copilot-option-2") }
+        { label: "Task 1", href: readinessHref(project, "copilot-task-1"), done: false },
+        { label: "Task 2", href: readinessHref(project, "copilot-task-2"), done: false }
       ]
     }
   ];
 
   return `
-    <div class="mission-layout">
-      <section class="card">
-        <h2>Mission Control</h2>
-        <p class="hint">Choose a configuration path. Each group expands into available options.</p>
-        ${groups.map((group) => `
+    <section class="card mission-control-card">
+      <h2>Mission Control</h2>
+      <p class="hint">Choose a configuration path. Each group expands into available options.</p>
+      ${groups.map((group) => {
+        const completed = group.options.filter((option) => option.done).length;
+        return `
           <details class="mission-group" ${group.open ? "open" : ""}>
-            <summary>${escapeHtml(group.title)}</summary>
+            <summary>
+              <span>${escapeHtml(group.title)}</span>
+              <span class="mission-count" data-total="${group.options.length}">${completed === group.options.length ? "🎉 " : ""}${completed}/${group.options.length} completed</span>
+            </summary>
             <div class="mission-options">
               ${group.options.map((option) => `
-                <a class="mission-option" href="${escapeHtml(option.href)}">
-                  <span>${escapeHtml(option.label)}</span>
-                  <span>Open</span>
-                </a>
+                <div class="mission-option">
+                  <span class="mission-task-title">
+                    <input type="checkbox" data-mission-checkbox ${option.done ? "checked" : ""}>
+                    <span>${escapeHtml(option.label)}</span>
+                  </span>
+                  <a class="mission-open-link" href="${escapeHtml(option.href)}">Open</a>
+                </div>
               `).join("")}
             </div>
           </details>
-        `).join("")}
-      </section>
-      <section class="card">
-        <h2>Readiness checklist</h2>
-        <ul class="checklist">
-          ${renderChecklistItem("Flight created", true)}
-          ${renderChecklistItem("Airtable table provisioned / bound", Boolean(project.airtable_table_name))}
-          ${renderChecklistItem("Key column selected", Boolean(project.airtable_key_column))}
-          ${renderChecklistItem("JSONata output schema saved", Boolean(project.airtable_key_column))}
-          ${renderChecklistItem("AI agent bot created in Zendesk", Boolean(project.module2_bot_confirmed))}
-          ${renderChecklistItem("API connection tested", false)}
-          ${renderChecklistItem("Client collaborator invited", false)}
-        </ul>
-      </section>
-    </div>
+        `;
+      }).join("")}
+      <script>
+        document.querySelectorAll(".mission-group").forEach((group) => {
+          const updateMissionCount = () => {
+            const checked = group.querySelectorAll("[data-mission-checkbox]:checked").length;
+            const count = group.querySelector(".mission-count");
+            if (count) {
+              const complete = checked === Number(count.dataset.total);
+              count.textContent = (complete ? "🎉 " : "") + checked + "/" + count.dataset.total + " completed";
+            }
+          };
+          group.querySelectorAll("[data-mission-checkbox]").forEach((checkbox) => {
+            checkbox.addEventListener("change", updateMissionCount);
+          });
+        });
+      </script>
+    </section>
   `;
 }
 
@@ -1362,13 +1548,20 @@ function renderChecklistItem(label, done) {
 }
 
 const READINESS_PLACEHOLDERS = {
-  "basic-option-1": { title: "Basic Bot Configuration - Option 1", description: "Placeholder for the first Basic Bot configuration path." },
-  "basic-option-2": { title: "Basic Bot Configuration - Option 2", description: "Placeholder for the second Basic Bot configuration path." },
-  "advanced-option-1": { title: "Advanced Bot Configuration - Option 1", description: "Placeholder for an additional Advanced Bot configuration path." },
-  "advanced-option-2": { title: "Advanced Bot Configuration - Option 2", description: "Placeholder for an additional Advanced Bot configuration path." },
-  "copilot-option-1": { title: "Copilot Configuration - Option 1", description: "Placeholder for the first Copilot configuration path." },
-  "copilot-option-2": { title: "Copilot Configuration - Option 2", description: "Placeholder for the second Copilot configuration path." }
+  "build-api-connection": { title: "Build an API Connection", description: "Configure Airtable and Zendesk AI Agent API connection." },
+  "help-center-readiness": { title: "Help Center Readiness Check", description: "Placeholder for the Help Center readiness check." },
+  "connect-zendesk-help-center": { title: "Connect Zendesk Help Center", description: "Placeholder for connecting Zendesk Help Center." },
+  "build-simple-procedure": { title: "Build a Simple Procedure", description: "Placeholder for building a simple procedure." },
+  "connect-external-content": { title: "Connect External Content", description: "Placeholder for connecting external content." },
+  "build-advanced-procedure-api": { title: "Build an Advanced Procedure using API calls", description: "Placeholder for building an advanced procedure using API calls." },
+  "copilot-task-1": { title: "Flight Crew Configuration - Task 1", description: "Placeholder for Flight Crew task 1." },
+  "copilot-task-2": { title: "Flight Crew Configuration - Task 2", description: "Placeholder for Flight Crew task 2." }
 };
+
+function redirectBack(req, res) {
+  const target = req.get("Referrer") || "/";
+  res.redirect(target);
+}
 
 function sortHeader(label, key, currentSort, currentDir, filter, hideCompleted) {
   const isActive = currentSort === key;
@@ -1379,6 +1572,37 @@ function sortHeader(label, key, currentSort, currentDir, filter, hideCompleted) 
   if (hideCompleted) params.set("hideCompleted", "true");
   return `<a class="sort-link" href="/?${params.toString()}">${escapeHtml(label)}${indicator}</a>`;
 }
+
+app.post("/admin/view-as", requireUser, (req, res, next) => {
+  try {
+    if (!req.user.isAdmin) {
+      res.status(403).send("Not allowed.");
+      return;
+    }
+
+    const email = normalizeEmail(req.body.email);
+    if (!assertValidEmail(email)) {
+      throw new Error("Enter a valid email to view as.");
+    }
+
+    req.session.viewAsEmail = email;
+    setFlash(req, `Viewing as ${email}.`, "success");
+    redirectBack(req, res);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/admin/view-as/exit", requireUser, (req, res) => {
+  if (!req.user.isAdmin) {
+    res.status(403).send("Not allowed.");
+    return;
+  }
+
+  delete req.session.viewAsEmail;
+  setFlash(req, "Exited view-as mode.", "success");
+  redirectBack(req, res);
+});
 
 app.get("/", requireUser, async (req, res, next) => {
   try {
@@ -1395,7 +1619,7 @@ app.get("/", requireUser, async (req, res, next) => {
         <td>${escapeHtml(project.owner_email)}</td>
         <td>${escapeHtml(project.account_executive || "")}</td>
         <td>${escapeHtml(formatCurrency(project.arr_impact))}</td>
-        <td>${escapeHtml(formatDayMonth(project.end_date))}</td>
+        <td>${escapeHtml(formatFlightTableEndDate(project))}</td>
       </tr>
     `).join("");
 
@@ -1411,8 +1635,7 @@ app.get("/", requireUser, async (req, res, next) => {
           <input type="hidden" name="sort" value="${escapeHtml(sort)}">
           <input type="hidden" name="dir" value="${escapeHtml(dir)}">
           <div>
-            <label for="filter">Filter</label>
-            <input id="filter" name="filter" value="${escapeHtml(filter)}" placeholder="...flight, account, etc." autocomplete="off">
+            <input id="filter" name="filter" value="${escapeHtml(filter)}" placeholder="Filter by flight, account, SE, AE, etc." autocomplete="off">
           </div>
           <label class="inline-checkbox">
             <input type="checkbox" name="hideCompleted" value="true" ${hideCompleted ? "checked" : ""}>
@@ -1583,6 +1806,11 @@ app.get("/projects/:id", requireUser, async (req, res, next) => {
     }
 
     const authorizedUsers = await getAuthorizedUsers(project.id);
+    if (!req.user.isZendesk && project.is_authorized_user) {
+      res.send(pageChrome(req, `${project.project_name} Flight Crew Flight`, renderCopilotFlightPlaceholder(project)));
+      return;
+    }
+
     res.send(pageChrome(req, `${project.project_name} Flight`, `
       ${renderFlightHero(project, req.user)}
       ${renderSuccessCriteriaSection(project, canManageProject(project, req.user))}
@@ -1695,12 +1923,33 @@ app.post("/projects/:id/authorized-users", requireUser, async (req, res, next) =
     if (email.endsWith("@zendesk.com")) throw new Error("Authorized users should use non-Zendesk emails.");
 
     await pool.query(
-      `INSERT INTO project_authorized_users (project_id, name, email)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (project_id, email) DO UPDATE SET name = EXCLUDED.name`,
-      [project.id, req.body.name, email]
+      `INSERT INTO project_authorized_users (project_id, name, email, role, access_enabled)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (project_id, email) DO UPDATE SET
+         name = EXCLUDED.name,
+         role = EXCLUDED.role,
+         access_enabled = EXCLUDED.access_enabled`,
+      [project.id, req.body.name, email, req.body.role || "Flight Crew", selectedValues(req.body.access_enabled).includes("true")]
     );
-    setFlash(req, "Authorized user saved.", "success");
+    setFlash(req, "Flight Crew saved.", "success");
+    res.redirect(`/projects/${project.id}`);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/projects/:id/authorized-users/:userId/access", requireUser, async (req, res, next) => {
+  try {
+    const project = await getProject(req.params.id, req.user);
+    if (!project || !canManageProject(project, req.user)) {
+      res.status(403).send("Not allowed.");
+      return;
+    }
+
+    await pool.query(
+      "UPDATE project_authorized_users SET access_enabled = $1 WHERE project_id = $2 AND id = $3",
+      [selectedValues(req.body.access_enabled).includes("true"), project.id, req.params.userId]
+    );
     res.redirect(`/projects/${project.id}`);
   } catch (error) {
     next(error);
@@ -1719,7 +1968,7 @@ app.post("/projects/:id/authorized-users/:userId/delete", requireUser, async (re
       "DELETE FROM project_authorized_users WHERE project_id = $1 AND id = $2",
       [project.id, req.params.userId]
     );
-    setFlash(req, "Authorized user removed.", "success");
+    setFlash(req, "Flight Crew removed.", "success");
     res.redirect(`/projects/${project.id}`);
   } catch (error) {
     next(error);
@@ -1730,13 +1979,17 @@ function moduleNav(project, active) {
   return `
     <div class="steps">
       <a class="step" href="/projects/${project.id}">Flight details</a>
-      <a class="step ${active === "module1" ? "active" : ""}" href="/projects/${project.id}/module1">Advanced Bot: Airtable API</a>
-      <a class="step ${active === "module2" ? "active" : ""}" href="/projects/${project.id}/module2">Advanced Bot: Zendesk AI Agent</a>
+      <a class="step ${active === "module1" ? "active" : ""}" href="${airtableConfigHref(project)}">Airtable Configuration</a>
+      <a class="step ${active === "module2" ? "active" : ""}" href="${aiAgentConfigHref(project)}">AI Agent Configuration</a>
     </div>
   `;
 }
 
 app.get("/projects/:id/module1", requireUser, async (req, res, next) => {
+  res.redirect(airtableConfigHref({ id: req.params.id }));
+});
+
+app.get("/projects/:id/readiness/:module/airtable-config", requireUser, async (req, res, next) => {
   try {
     const project = await getProject(req.params.id, req.user);
     if (!project) {
@@ -1746,7 +1999,9 @@ app.get("/projects/:id/module1", requireUser, async (req, res, next) => {
 
     const config = await getConfig(project.id);
     const authorizedUsers = await getAuthorizedUsers(project.id);
+    const currentModuleTitle = moduleTitle(req.params.module);
     let body = `
+      ${renderBreadcrumb(project, [{ label: currentModuleTitle, href: readinessHref(project, req.params.module) }, { label: "Airtable Configuration" }])}
       ${moduleNav(project, "module1")}
       <section class="card">
         <h1>${escapeHtml(project.project_name)}</h1>
@@ -1813,12 +2068,21 @@ function renderAuthorizedUserManagement(project, authorizedUsers, canManage = fa
     <tr>
       <td>${escapeHtml(user.name)}</td>
       <td>${escapeHtml(user.email)}</td>
+      <td>${escapeHtml(displayCrewRole(user.role))}</td>
+      <td>
+        ${canManage ? `
+          <form method="post" action="/projects/${project.id}/authorized-users/${user.id}/access">
+            <input type="hidden" name="access_enabled" value="false">
+            <input type="checkbox" name="access_enabled" value="true" ${user.access_enabled ? "checked" : ""} onchange="this.form.requestSubmit()">
+          </form>
+        ` : `<input type="checkbox" ${user.access_enabled ? "checked" : ""} disabled>`}
+      </td>
       <td>
         ${canManage ? `
           <form method="post" action="/projects/${project.id}/authorized-users/${user.id}/delete">
-            <button class="danger" type="submit">Remove</button>
+            <button class="trash-button" type="submit" title="Remove Flight Crew">&#128465;</button>
           </form>
-        ` : '<span class="pill">Invited</span>'}
+        ` : ""}
       </td>
     </tr>
   `).join("");
@@ -1827,28 +2091,44 @@ function renderAuthorizedUserManagement(project, authorizedUsers, canManage = fa
     <section class="card">
       <div class="actions" style="justify-content: space-between; margin-top: 0;">
         <div>
-          <h2>Collaborators</h2>
-          <p class="hint">These non-Zendesk users can see only this flight. Advanced Bot access depends on the flight flag.</p>
+          <h2>Flight Crew</h2>
         </div>
-        ${canManage ? '<span class="pill">Invite enabled</span>' : ""}
+        ${canManage ? '<button type="button" class="secondary" onclick="document.getElementById(\'copilot-modal\').hidden = false">Add Flight Crew</button>' : ""}
       </div>
       <table>
-        <thead><tr><th>Name</th><th>Email</th><th>Status</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="3">No collaborators invited yet.</td></tr>'}</tbody>
+        <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Access</th><th></th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="5">No Flight Crew added yet.</td></tr>'}</tbody>
       </table>
-      ${canManage ? `<form method="post" action="/projects/${project.id}/authorized-users" style="margin-top: 16px;">
-        <div class="grid two">
-          <div>
-            <label for="auth_name">Name</label>
-            <input id="auth_name" name="name" required>
-          </div>
-          <div>
-            <label for="auth_email">Non-Zendesk email</label>
-            <input id="auth_email" name="email" type="email" required>
+      ${canManage ? `
+        <div id="copilot-modal" class="modal-backdrop" hidden>
+          <div class="modal">
+            <h2>Add Flight Crew</h2>
+            <form method="post" action="/projects/${project.id}/authorized-users">
+              <div class="grid two">
+                <div>
+                  <label for="auth_name">Name</label>
+                  <input id="auth_name" name="name" required>
+                </div>
+                <div>
+                  <label for="auth_email">Email</label>
+                  <input id="auth_email" name="email" type="email" required>
+                </div>
+                <div>
+                  <label for="auth_role">Role</label>
+                  <input id="auth_role" name="role" value="Flight Crew" required>
+                </div>
+                <div class="checkbox-list">
+                  <label><input type="checkbox" name="access_enabled" value="true"> Access</label>
+                </div>
+              </div>
+              <div class="actions">
+                <button type="submit">Add Flight Crew</button>
+                <button type="button" class="secondary" onclick="document.getElementById('copilot-modal').hidden = true">Cancel</button>
+              </div>
+            </form>
           </div>
         </div>
-        <div class="actions"><button type="submit">Add authorized user</button></div>
-      </form>` : ""}
+      ` : ""}
     </section>
   `;
 }
@@ -1963,7 +2243,7 @@ function renderColumnSelection(project, sampleRow, selectedColumns) {
         </div>
         <div class="actions">
           <button type="submit">Save selected columns</button>
-          <a class="button secondary" href="/projects/${project.id}/module2">Continue to Zendesk AI Agent guide</a>
+          <a class="button secondary" href="${aiAgentConfigHref(project)}">Continue to Zendesk AI Agent guide</a>
         </div>
       </form>
     </section>
@@ -1982,7 +2262,7 @@ app.post("/projects/:id/airtable/pat", requireUser, async (req, res, next) => {
     await fetchBases(pat);
     await upsertAirtableConfig(project.id, { encrypted_pat: encryptSecret(pat) });
     setFlash(req, "Airtable PAT validated and saved securely.", "success");
-    res.redirect(`/projects/${project.id}/module1`);
+    res.redirect(airtableConfigHref(project));
   } catch (error) {
     next(error);
   }
@@ -2003,7 +2283,7 @@ app.post("/projects/:id/airtable/base", requireUser, async (req, res, next) => {
       [req.body.base_id, req.body.base_name || req.body.base_id, project.id]
     );
     setFlash(req, "Airtable base saved.", "success");
-    res.redirect(`/projects/${project.id}/module1`);
+    res.redirect(airtableConfigHref(project));
   } catch (error) {
     next(error);
   }
@@ -2029,7 +2309,7 @@ app.post("/projects/:id/airtable/table/select", requireUser, async (req, res, ne
     );
     await upsertAirtableConfig(project.id, { sample_row: records[0].fields, selected_columns: [] });
     setFlash(req, "Airtable table selected and sample row confirmed.", "success");
-    res.redirect(`/projects/${project.id}/module1`);
+    res.redirect(airtableConfigHref(project));
   } catch (error) {
     next(error);
   }
@@ -2066,7 +2346,7 @@ app.post("/projects/:id/airtable/table/create", requireUser, async (req, res, ne
       airtable_metadata: { createdTable: table, schemaType }
     });
     setFlash(req, "Airtable table and sample data created.", "success");
-    res.redirect(`/projects/${project.id}/module1`);
+    res.redirect(airtableConfigHref(project));
   } catch (error) {
     next(error);
   }
@@ -2092,13 +2372,18 @@ app.post("/projects/:id/airtable/columns", requireUser, async (req, res, next) =
       sample_row: records[0]?.fields || {}
     });
     setFlash(req, "Saved key column and selected fields for the Zendesk AI Agent guide.", "success");
-    res.redirect(`/projects/${project.id}/module2`);
+    res.redirect(aiAgentConfigHref(project));
   } catch (error) {
     next(error);
   }
 });
 
 app.get("/projects/:id/module2", requireUser, async (req, res, next) => {
+  const target = aiAgentConfigHref({ id: req.params.id });
+  res.redirect(req.query.tab ? `${target}?tab=${encodeURIComponent(req.query.tab)}` : target);
+});
+
+app.get("/projects/:id/readiness/:module/ai-agent-config", requireUser, async (req, res, next) => {
   try {
     const project = await getProject(req.params.id, req.user);
     if (!project) {
@@ -2119,21 +2404,23 @@ app.get("/projects/:id/module2", requireUser, async (req, res, next) => {
     const selectedColumns = config?.selected_columns || [];
     const sampleRow = config?.sample_row || {};
     const activeTab = req.query.tab || "confirm";
+    const currentModuleTitle = moduleTitle(req.params.module);
 
     res.send(pageChrome(req, "Advanced Bot: Zendesk AI Agent", `
+      ${renderBreadcrumb(project, [{ label: currentModuleTitle, href: readinessHref(project, req.params.module) }, { label: "AI Agent Configuration" }])}
       ${moduleNav(project, "module2")}
       <section class="card">
         <h1>Zendesk AI Agent Configuration</h1>
         <p>Use these guided tabs to copy values from this app into Zendesk Actions > API Integrations > Add integration.</p>
       </section>
-      ${renderModule2Tabs(project, selectedColumns, sampleRow, activeTab)}
+      ${renderModule2Tabs(project, selectedColumns, sampleRow, activeTab, req.params.module)}
     `));
   } catch (error) {
     next(error);
   }
 });
 
-function renderModule2Tabs(project, selectedColumns, sampleRow, activeTab) {
+function renderModule2Tabs(project, selectedColumns, sampleRow, activeTab, moduleSlug = "build-api-connection") {
   const tabs = [
     ["confirm", "SE Bot"],
     ["environment", "Environment"],
@@ -2143,7 +2430,7 @@ function renderModule2Tabs(project, selectedColumns, sampleRow, activeTab) {
     ["success", "Success Scenarios"]
   ];
   const content = {
-    confirm: renderBotConfirmation(project),
+    confirm: renderBotConfirmation(project, moduleSlug),
     environment: renderCopyPanel("Environment", [
       ["Environment", "Production"],
       ["Integration Name", `${project.project_name} Airtable Lookup`],
@@ -2173,7 +2460,7 @@ function renderModule2Tabs(project, selectedColumns, sampleRow, activeTab) {
     <section class="card tabs">
       <nav class="tabnav">
         ${tabs.map(([id, label]) =>
-          `<a class="${activeTab === id ? "active" : ""}" href="/projects/${project.id}/module2?tab=${id}">${escapeHtml(label)}</a>`
+          `<a class="${activeTab === id ? "active" : ""}" href="${aiAgentConfigHref(project, moduleSlug)}?tab=${id}">${escapeHtml(label)}</a>`
         ).join("")}
       </nav>
       <div>${content[activeTab] || content.confirm}</div>
@@ -2181,11 +2468,11 @@ function renderModule2Tabs(project, selectedColumns, sampleRow, activeTab) {
   `;
 }
 
-function renderBotConfirmation(project) {
+function renderBotConfirmation(project, moduleSlug = "build-api-connection") {
   return `
     <h2>Step 1: SE Create Bot</h2>
     <p>Confirm that the SE has already built the Zendesk bot they want to use.</p>
-    <form method="post" action="/projects/${project.id}/module2/bot-confirmation">
+    <form method="post" action="${aiAgentConfigHref(project, moduleSlug)}/bot-confirmation">
       <div class="checkbox-list">
         <label><input type="checkbox" name="confirmed" value="true" ${project.module2_bot_confirmed ? "checked" : ""}> Yes, the bot has been built.</label>
       </div>
@@ -2229,7 +2516,7 @@ function renderSuccessScenarios(selectedColumns, sampleRow) {
   `;
 }
 
-app.post("/projects/:id/module2/bot-confirmation", requireUser, async (req, res, next) => {
+async function handleBotConfirmation(req, res, next) {
   try {
     const project = await getProject(req.params.id, req.user);
     if (!project || !canAccessModule2(project, req.user)) {
@@ -2241,11 +2528,14 @@ app.post("/projects/:id/module2/bot-confirmation", requireUser, async (req, res,
       [req.body.confirmed === "true", project.id]
     );
     setFlash(req, "Bot confirmation saved.", "success");
-    res.redirect(`/projects/${project.id}/module2`);
+    res.redirect(aiAgentConfigHref(project, req.params.module || "build-api-connection"));
   } catch (error) {
     next(error);
   }
-});
+}
+
+app.post("/projects/:id/module2/bot-confirmation", requireUser, handleBotConfirmation);
+app.post("/projects/:id/readiness/:module/ai-agent-config/bot-confirmation", requireUser, handleBotConfirmation);
 
 app.use((error, req, res, _next) => {
   console.error(error);
